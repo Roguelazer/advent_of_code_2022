@@ -15,8 +15,7 @@ struct Args {
     mode: Mode,
 }
 
-fn is_unique_bytes(s: &[u8]) -> bool {
-    let mut set = bit_set::BitSet::with_capacity(256);
+fn is_unique_bytes(s: &[u8], set: &mut bit_set::BitSet) -> bool {
     for c in s {
         if !set.insert(*c as usize) {
             return false;
@@ -35,12 +34,14 @@ fn main() -> anyhow::Result<()> {
     };
     let mut input = Vec::new();
     handle.read_to_end(&mut input)?;
+    let mut s = bit_set::BitSet::with_capacity(256);
     let res = input
         .as_slice()
         .windows(sequence_size)
         .enumerate()
         .find_map(|(i, window)| {
-            if is_unique_bytes(window) {
+            s.clear();
+            if is_unique_bytes(window, &mut s) {
                 Some(i + sequence_size)
             } else {
                 None
