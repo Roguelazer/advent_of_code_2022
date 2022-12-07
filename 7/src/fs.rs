@@ -32,22 +32,16 @@ impl DNode {
         }
     }
 
-    fn size(&self, fs: &Filesystem) -> usize {
-        let file_size: usize = self
-            .files
-            .values()
-            .filter_map(|br| fs.get_file(br).map(|f| f.size))
-            .sum();
-        let dir_size: usize = self
-            .children
+    fn child_size(&self, fs: &Filesystem) -> usize {
+        self.children
             .values()
             .filter_map(|br| fs.get_dir(br).map(|f| f.size))
-            .sum();
-        file_size + dir_size
+            .sum()
     }
 
-    fn add_file(&mut self, path: String, ptr: BlockRef) {
+    fn add_file(&mut self, path: String, ptr: BlockRef, size: usize) {
         self.files.insert(path, ptr);
+        self.size += size;
     }
 
     fn add_directory(&mut self, path: String, ptr: BlockRef) {
@@ -199,14 +193,6 @@ impl Filesystem {
         self.blocks.get(block.as_block_ref())
     }
 
-    pub fn get_file<R: AsBlockRef>(&self, block: &R) -> Option<&INode> {
-        if let Some(FsItem::INode(d)) = self.blocks.get(block.as_block_ref()) {
-            Some(d)
-        } else {
-            None
-        }
-    }
-
     pub fn get_dir<R: AsBlockRef>(&self, block: &R) -> Option<&DNode> {
         if let Some(FsItem::DNode(d)) = self.blocks.get(block.as_block_ref()) {
             Some(d)
@@ -245,7 +231,7 @@ impl Filesystem {
     ) -> anyhow::Result<BlockRef> {
         let file = self.blocks.alloc_file(size);
         if let Some(parent) = self.get_mut_dir(parent.as_block_ref()) {
-            parent.add_file(name.into(), file);
+            parent.add_file(name.into(), file, size);
             Ok(file)
         } else {
             anyhow::bail!("could not find parent directory");
@@ -285,10 +271,10 @@ impl Filesystem {
         for block_ref in traversal.into_iter().rev() {
             let size = self
                 .get_dir(&block_ref)
-                .map(|d| d.size(self))
+                .map(|d| d.child_size(self))
                 .ok_or_else(|| anyhow::anyhow!("failed to compute size!"))?;
             if let Some(d) = self.get_mut_dir(block_ref) {
-                d.size = size;
+                d.size += size;
             }
         }
         Ok(())
