@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::io::BufRead;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use clap::Parser;
 use crossterm::{
@@ -140,7 +142,7 @@ impl Knot {
         let label = if label == 0 {
             'H'
         } else {
-            char::from(label + b'a')
+            char::from((label % 53) + b'I')
         };
         Self {
             label,
@@ -154,6 +156,7 @@ impl Knot {
         self.position = position;
     }
 
+    #[inline(always)]
     fn apply(&self, ordinal: Ordinal) -> Coordinate {
         self.position.apply(ordinal)
     }
@@ -161,7 +164,7 @@ impl Knot {
     fn follow(&self, other: &Knot) -> Coordinate {
         if !self.position.touches(&other.position) {
             if let Some(direction_to) = self.position.direction_to(&other.position) {
-                self.position.apply(direction_to)
+                self.apply(direction_to)
             } else {
                 self.position
             }
@@ -180,9 +183,17 @@ struct Args {
     verbose: bool,
     #[arg(short, long, value_parser, default_value("32"))]
     ms_per_frame: u64,
+    #[arg(long)]
+    trails: bool,
 }
 
-fn render<W: std::io::Write>(out: &mut W, knots: &[Knot], i: usize) -> anyhow::Result<()> {
+fn render<W: std::io::Write>(
+    out: &mut W,
+    knots: &[Knot],
+    frame: u64,
+    command: usize,
+    trails: bool,
+) -> anyhow::Result<()> {
     let (width, height) = crossterm::terminal::size()
         .map(|(w, h)| (w as i32, h as i32))
         .unwrap_or((80, 40));
@@ -190,21 +201,30 @@ fn render<W: std::io::Write>(out: &mut W, knots: &[Knot], i: usize) -> anyhow::R
         -1 * width / 2 + 1,
         width / 2,
         -1 * height / 2 + 1,
-        height / 2,
+        height / 2 - 1,
     );
     execute!(out, MoveTo(0, 0))?;
     (min_y..=max_y).for_each(|y| {
         (min_x..=max_x).for_each(|x| {
-            if let Some(k) = knots.iter().find(|k| k.position == Coordinate { x, y }) {
+            let coord = Coordinate { x, y };
+            if let Some(k) = knots.iter().find(|k| k.position == coord) {
                 print!("{}", k.label);
+            } else if trails
+                && knots
+                    .iter()
+                    .last()
+                    .map(|k| k.visited_positions.contains(&coord))
+                    .unwrap_or(false)
+            {
+                print!("#");
             } else {
                 print!(" ");
             }
         });
         print!("\n");
     });
-    execute!(out, MoveTo(0, (height as u16) - 1))?;
-    print!("{:10}", i);
+    execute!(out, MoveTo(0, height as u16))?;
+    print!(" [ frame {:<10} (command {:<10}) ]", frame, command + 1);
     Ok(())
 }
 
@@ -216,26 +236,40 @@ fn main() -> anyhow::Result<()> {
     let mut knots = (0..num_knots).map(|i| Knot::new(i)).collect::<Vec<Knot>>();
     let stdout_r = std::io::stdout();
     let mut stdout = stdout_r.lock();
+
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+    })?;
+
     if args.verbose {
         execute!(&mut stdout, EnterAlternateScreen)?;
         execute!(&mut stdout, Clear(ClearType::All))?;
         execute!(&mut stdout, Hide)?;
     }
+    let mut applied = 0u64;
     for (i, line) in stdin.lines().enumerate() {
         let command: Command = line?.parse()?;
         for _ in 0..command.step {
             for knot_offset in 0..knots.len() {
                 let dir = if knot_offset == 0 {
                     knots[knot_offset].apply(command.ordinal)
+                } else if knot_offset == 12 {
+                    knots[knot_offset].follow(&knots[3])
                 } else {
                     knots[knot_offset].follow(&knots[knot_offset - 1])
                 };
                 knots.get_mut(knot_offset).unwrap().move_to(dir);
             }
+            applied += 1;
             if args.verbose {
-                render(&mut stdout, knots.as_slice(), i)?;
+                render(&mut stdout, knots.as_slice(), applied, i, args.trails)?;
                 std::thread::sleep(std::time::Duration::from_millis(args.ms_per_frame));
             }
+        }
+        if !running.load(Ordering::SeqCst) {
+            break;
         }
     }
     if args.verbose {

@@ -1,0 +1,18 @@
+#!/usr/bin/env python
+
+import random
+import sys
+
+
+def main():
+    try:
+        while True:
+            direction = random.choice(["R", "L", "U", "D"])
+            count = random.randint(0, 1)
+            print("{0} {1}".format(direction, count))
+            sys.stdout.flush()
+    except BrokenPipeError:
+        return
+
+
+main()
