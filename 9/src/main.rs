@@ -40,40 +40,14 @@ impl Coordinate {
                 x: self.x + 1,
                 y: self.y,
             },
-            Ordinal::UpRight => Coordinate {
-                x: self.x + 1,
-                y: self.y + 1,
-            },
-            Ordinal::UpLeft => Coordinate {
-                x: self.x - 1,
-                y: self.y + 1,
-            },
-            Ordinal::DownRight => Coordinate {
-                x: self.x + 1,
-                y: self.y - 1,
-            },
-            Ordinal::DownLeft => Coordinate {
-                x: self.x - 1,
-                y: self.y - 1,
-            },
         }
     }
 
-    fn direction_to(&self, other: &Coordinate) -> Option<Ordinal> {
-        let x_offset = (other.x - self.x).signum();
-        let y_offset = (other.y - self.y).signum();
-        Some(match (x_offset, y_offset) {
-            (0, 0) => return None,
-            (1, 0) => Ordinal::Right,
-            (-1, 0) => Ordinal::Left,
-            (0, 1) => Ordinal::Up,
-            (0, -1) => Ordinal::Down,
-            (1, 1) => Ordinal::UpRight,
-            (1, -1) => Ordinal::DownRight,
-            (-1, 1) => Ordinal::UpLeft,
-            (-1, -1) => Ordinal::DownLeft,
-            _ => unreachable!("signum only returns [-1, 0, 1]"),
-        })
+    fn move_toward(&self, other: &Coordinate) -> Coordinate {
+        Coordinate {
+            x: self.x + (other.x - self.x).signum(),
+            y: self.y + (other.y - self.y).signum(),
+        }
     }
 }
 
@@ -83,10 +57,6 @@ enum Ordinal {
     Down,
     Left,
     Right,
-    UpRight,
-    UpLeft,
-    DownRight,
-    DownLeft,
 }
 
 impl FromStr for Ordinal {
@@ -156,18 +126,13 @@ impl Knot {
         self.position = position;
     }
 
-    #[inline(always)]
-    fn apply(&self, ordinal: Ordinal) -> Coordinate {
-        self.position.apply(ordinal)
+    fn apply(&mut self, ordinal: Ordinal) {
+        self.move_to(self.position.apply(ordinal));
     }
 
     fn follow(&self, other: &Knot) -> Coordinate {
         if !self.position.touches(&other.position) {
-            if let Some(direction_to) = self.position.direction_to(&other.position) {
-                self.apply(direction_to)
-            } else {
-                self.position
-            }
+            self.position.move_toward(&other.position)
         } else {
             self.position
         }
@@ -252,14 +217,9 @@ fn main() -> anyhow::Result<()> {
     for (i, line) in stdin.lines().enumerate() {
         let command: Command = line?.parse()?;
         for _ in 0..command.step {
-            for knot_offset in 0..knots.len() {
-                let dir = if knot_offset == 0 {
-                    knots[knot_offset].apply(command.ordinal)
-                } else if knot_offset == 12 {
-                    knots[knot_offset].follow(&knots[3])
-                } else {
-                    knots[knot_offset].follow(&knots[knot_offset - 1])
-                };
+            knots[0].apply(command.ordinal);
+            for knot_offset in 1..knots.len() {
+                let dir = knots[knot_offset].follow(&knots[knot_offset - 1]);
                 knots.get_mut(knot_offset).unwrap().move_to(dir);
             }
             applied += 1;
