@@ -2,13 +2,8 @@ use std::str::FromStr;
 
 use clap::{Parser, ValueEnum};
 use itertools::Itertools;
-use nom::branch::alt;
-use nom::bytes::complete::tag;
-use nom::character::complete::{digit1, newline, one_of, space1};
-use nom::combinator::{map, map_res};
-use nom::multi::separated_list1;
-use nom::sequence::{delimited, pair, preceded, separated_pair};
-use nom::IResult;
+use once_cell::sync::Lazy;
+use regex::Regex;
 
 #[derive(ValueEnum, Debug, PartialEq, Eq, Clone, Copy)]
 enum Mode {
@@ -120,48 +115,42 @@ impl Monkey {
     }
 }
 
-fn parse_monkey<'a>(s: &'a str) -> IResult<&'a str, Monkey> {
-    let (s, monkey_id) = delimited(
-        tag("Monkey "),
-        map(nom::character::complete::u32, |r: u32| r as usize),
-        tag(":\n"),
-    )(s)?;
-    let (s, items) = delimited(
-        preceded(space1, tag("Starting items: ")),
-        separated_list1(tag(", "), nom::character::complete::i64),
-        newline,
-    )(s)?;
-    let (s, (op, operand)) = delimited(
-        pair(space1, tag("Operation: new = old ")),
-        separated_pair(
-            map_res(one_of("+*"), |s: char| {
-                Ok(match s {
-                    '+' => Op::Add,
-                    '*' => Op::Multiply,
-                    other => anyhow::bail!("invalid operation {}", other),
-                })
-            }),
-            tag(" "),
-            map_res(alt((tag("old"), digit1)), |s: &str| s.parse::<Operand>()),
-        ),
-        newline,
-    )(s)?;
-    let (s, modulus) = delimited(
-        pair(space1, tag("Test: divisible by ")),
-        nom::character::complete::i64,
-        newline,
-    )(s)?;
-    let (s, true_target) = delimited(
-        pair(space1, tag("If true: throw to monkey ")),
-        map(nom::character::complete::u32, |r: u32| r as usize),
-        newline,
-    )(s)?;
-    let (s, false_target) = delimited(
-        pair(space1, tag("If false: throw to monkey ")),
-        map(nom::character::complete::u32, |r: u32| r as usize),
-        newline,
-    )(s)?;
-    let monkey = Monkey {
+static MONKEY_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?xm)
+        ^ Monkey \s (?P<monkey_id>\d+): \n
+        ^ \s+ Starting \s  items: \s (?P<items>(?: \d+ ,\s )* \d+) \n
+        ^ \s+ Operation: \s+ new \s+ = \s+ old \s+ (?P<op> [+*])\s+(?P<operand> \S+ ) \n
+        ^ \s+ Test: \s+ divisible\ by\  (?P<modulus>\d+) \n
+        ^ \s+ If\ true:\ throw\ to\ monkey\  (?P<true_target>\d+) \n
+        ^ \s+ If\ false:\ throw\ to\ monkey\  (?P<false_target>\d+)
+    "#,
+    )
+    .unwrap()
+});
+
+fn parse_monkey<'a>(s: &'a str) -> anyhow::Result<Monkey> {
+    let c = MONKEY_RE
+        .captures(s)
+        .ok_or_else(|| anyhow::anyhow!("Invalid monke {}", s))?;
+    let monkey_id = c.name("monkey_id").unwrap().as_str().parse()?;
+    let items = c
+        .name("items")
+        .unwrap()
+        .as_str()
+        .split(',')
+        .map(|i| i.trim().parse::<i64>())
+        .collect::<Result<Vec<i64>, _>>()?;
+    let op = match c.name("op").unwrap().as_str() {
+        "+" => Op::Add,
+        "*" => Op::Multiply,
+        other => anyhow::bail!("Unhandled operation {}", other),
+    };
+    let operand = c.name("operand").unwrap().as_str().parse()?;
+    let modulus = c.name("modulus").unwrap().as_str().parse()?;
+    let true_target = c.name("true_target").unwrap().as_str().parse()?;
+    let false_target = c.name("false_target").unwrap().as_str().parse()?;
+    Ok(Monkey {
         id: monkey_id,
         inspections: 0,
         items,
@@ -172,17 +161,13 @@ fn parse_monkey<'a>(s: &'a str) -> IResult<&'a str, Monkey> {
             true_target,
             false_target,
         },
-    };
-    Ok((s, monkey))
+    })
 }
 
 fn parse_monkeys(s: &str) -> anyhow::Result<Vec<Monkey>> {
-    let (remaining, monkeys) = separated_list1(tag("\n"), parse_monkey)(s)
-        .map_err(|e| anyhow::anyhow!("Parsing error: {:?}", e))?;
-    if remaining.len() > 0 {
-        anyhow::bail!("unconsumed input {:?}", remaining);
-    }
-    Ok(monkeys)
+    s.split("\n\n")
+        .map(|monkey| parse_monkey(monkey))
+        .collect::<anyhow::Result<Vec<Monkey>>>()
 }
 
 fn simulate_round(monkeys: &mut Vec<Monkey>, common_modulus: i64, div_level: bool) {
@@ -252,8 +237,7 @@ mod tests {
     If false: throw to monkey 3
 "#,
         );
-        let (remaining, monkey) = res.unwrap();
-        assert_eq!(remaining.len(), 0);
+        let monkey = res.unwrap();
         assert_eq!(monkey.id, 0);
         assert_eq!(monkey.items, vec![79, 98]);
         assert_eq!(monkey.operation, Op::Multiply);
