@@ -2,13 +2,15 @@ use std::str::FromStr;
 
 use clap::{Parser, ValueEnum};
 use itertools::Itertools;
-use nom::branch::alt;
-use nom::bytes::complete::tag;
-use nom::character::complete::{digit1, newline, one_of, space1};
-use nom::combinator::{map, map_res};
-use nom::multi::separated_list1;
-use nom::sequence::{delimited, pair, preceded, separated_pair};
-use nom::IResult;
+use nom::{
+    branch::alt,
+    bytes::complete::tag,
+    character::complete::{digit1, newline, one_of, space1},
+    combinator::{map, map_res},
+    multi::separated_list1,
+    sequence::{delimited, pair, preceded, separated_pair},
+    IResult,
+};
 
 #[derive(ValueEnum, Debug, PartialEq, Eq, Clone, Copy)]
 enum Mode {
@@ -120,7 +122,7 @@ impl Monkey {
     }
 }
 
-fn parse_monkey<'a>(s: &'a str) -> IResult<&'a str, Monkey> {
+fn parse_monkey(s: &str) -> IResult<&str, Monkey> {
     let (s, monkey_id) = delimited(
         tag("Monkey "),
         map(nom::character::complete::u32, |r: u32| r as usize),
@@ -179,7 +181,7 @@ fn parse_monkey<'a>(s: &'a str) -> IResult<&'a str, Monkey> {
 fn parse_monkeys(s: &str) -> anyhow::Result<Vec<Monkey>> {
     let (remaining, monkeys) = separated_list1(tag("\n"), parse_monkey)(s)
         .map_err(|e| anyhow::anyhow!("Parsing error: {:?}", e))?;
-    if remaining.len() > 0 {
+    if !remaining.is_empty() {
         anyhow::bail!("unconsumed input {:?}", remaining);
     }
     Ok(monkeys)
@@ -226,13 +228,13 @@ fn main() -> anyhow::Result<()> {
             }
         }
     }
-    let too_much = monkeys
+    let too_much: usize = monkeys
         .iter()
         .map(|m| m.inspections)
         .sorted()
         .rev()
         .take(2)
-        .fold(1, |a, b| a * b);
+        .product();
     println!("{}", too_much);
     Ok(())
 }
