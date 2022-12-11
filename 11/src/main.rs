@@ -1,8 +1,14 @@
-use std::io::BufRead;
 use std::str::FromStr;
 
 use clap::{Parser, ValueEnum};
 use itertools::Itertools;
+use nom::branch::alt;
+use nom::bytes::complete::tag;
+use nom::character::complete::{digit1, newline, one_of, space1};
+use nom::combinator::{map, map_res};
+use nom::multi::separated_list1;
+use nom::sequence::{delimited, pair, preceded, separated_pair};
+use nom::IResult;
 
 #[derive(ValueEnum, Debug, PartialEq, Eq, Clone, Copy)]
 enum Mode {
@@ -114,87 +120,67 @@ impl Monkey {
     }
 }
 
-fn parse_monkeys<R: BufRead>(io: &mut R) -> anyhow::Result<Vec<Monkey>> {
-    let mut monkeys = vec![];
-    for mut monkey_chunk in &io.lines().filter_map(Result::ok).chunks(7) {
-        let monkey_id: usize = monkey_chunk
-            .next()
-            .unwrap()
-            .trim_end_matches(':')
-            .split(' ')
-            .nth(1)
-            .unwrap()
-            .parse()?;
-        let items = monkey_chunk
-            .next()
-            .unwrap()
-            .split(':')
-            .nth(1)
-            .unwrap()
-            .split(',')
-            .map(|s| {
-                s.trim()
-                    .to_owned()
-                    .parse::<i64>()
-                    .map_err(|e| anyhow::Error::new(e))
-            })
-            .collect::<anyhow::Result<Vec<i64>>>()?;
-        let op_s = monkey_chunk
-            .next()
-            .unwrap()
-            .split("= old ")
-            .nth(1)
-            .unwrap()
-            .to_owned();
-        let (op, operand) = {
-            let op = match &op_s[0..1] {
-                "+" => Op::Add,
-                "*" => Op::Multiply,
-                o => anyhow::bail!("invalid op {}", o),
-            };
-            let val = Operand::from_str(&op_s[2..])?;
-            (op, val)
-        };
-        let test_s = monkey_chunk.next().unwrap();
-        let test_s = test_s.split(':').nth(1);
-        let modulus = if let Some(rest) = test_s.and_then(|s| s.strip_prefix(" divisible by ")) {
-            rest.parse::<i64>()?
-        } else {
-            anyhow::bail!("unknown operation {:?}", test_s)
-        };
-        let true_value = monkey_chunk.next().unwrap();
-        let true_target = if let Some((_, id)) = true_value
-            .trim()
-            .strip_prefix("If true: ")
-            .and_then(|r| r.rsplit_once(' '))
-        {
-            id.parse::<usize>()?
-        } else {
-            anyhow::bail!("unknown action {:?}", true_value);
-        };
-        let false_value = monkey_chunk.next().unwrap();
-        let false_target = if let Some((_, id)) = false_value
-            .trim()
-            .strip_prefix("If false: ")
-            .and_then(|r| r.rsplit_once(' '))
-        {
-            id.parse::<usize>()?
-        } else {
-            anyhow::bail!("unknown action {:?}", true_value);
-        };
-        let test = Test {
+fn parse_monkey<'a>(s: &'a str) -> IResult<&'a str, Monkey> {
+    let (s, monkey_id) = delimited(
+        tag("Monkey "),
+        map(nom::character::complete::u32, |r: u32| r as usize),
+        tag(":\n"),
+    )(s)?;
+    let (s, items) = delimited(
+        preceded(space1, tag("Starting items: ")),
+        separated_list1(tag(", "), nom::character::complete::i64),
+        newline,
+    )(s)?;
+    let (s, (op, operand)) = delimited(
+        pair(space1, tag("Operation: new = old ")),
+        separated_pair(
+            map_res(one_of("+*"), |s: char| {
+                Ok(match s {
+                    '+' => Op::Add,
+                    '*' => Op::Multiply,
+                    other => anyhow::bail!("invalid operation {}", other),
+                })
+            }),
+            tag(" "),
+            map_res(alt((tag("old"), digit1)), |s: &str| s.parse::<Operand>()),
+        ),
+        newline,
+    )(s)?;
+    let (s, modulus) = delimited(
+        pair(space1, tag("Test: divisible by ")),
+        nom::character::complete::i64,
+        newline,
+    )(s)?;
+    let (s, true_target) = delimited(
+        pair(space1, tag("If true: throw to monkey ")),
+        map(nom::character::complete::u32, |r: u32| r as usize),
+        newline,
+    )(s)?;
+    let (s, false_target) = delimited(
+        pair(space1, tag("If false: throw to monkey ")),
+        map(nom::character::complete::u32, |r: u32| r as usize),
+        newline,
+    )(s)?;
+    let monkey = Monkey {
+        id: monkey_id,
+        inspections: 0,
+        items,
+        operation: op,
+        operand,
+        test: Test {
             modulus,
             true_target,
             false_target,
-        };
-        monkeys.push(Monkey {
-            id: monkey_id,
-            inspections: 0,
-            items,
-            operation: op,
-            operand,
-            test,
-        });
+        },
+    };
+    Ok((s, monkey))
+}
+
+fn parse_monkeys(s: &str) -> anyhow::Result<Vec<Monkey>> {
+    let (remaining, monkeys) = separated_list1(tag("\n"), parse_monkey)(s)
+        .map_err(|e| anyhow::anyhow!("Parsing error: {:?}", e))?;
+    if remaining.len() > 0 {
+        anyhow::bail!("unconsumed input {:?}", remaining);
     }
     Ok(monkeys)
 }
@@ -218,8 +204,8 @@ fn simulate_round(monkeys: &mut Vec<Monkey>, common_modulus: i64, div_level: boo
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let stdin_r = std::io::stdin();
-    let mut stdin = stdin_r.lock();
-    let mut monkeys = parse_monkeys(&mut stdin)?;
+    let input = std::io::read_to_string(stdin_r)?;
+    let mut monkeys = parse_monkeys(input.as_str())?;
     let common_modulus = monkeys.iter().fold(1, |a, m| a * m.test.modulus);
     let rounds = match args.rounds {
         Some(r) => r,
@@ -249,4 +235,31 @@ fn main() -> anyhow::Result<()> {
         .fold(1, |a, b| a * b);
     println!("{}", too_much);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_monkey, Op, Operand};
+
+    #[test]
+    fn test_parse_monkey() {
+        let res = parse_monkey(
+            r#"Monkey 0:
+  Starting items: 79, 98
+  Operation: new = old * 19
+  Test: divisible by 23
+    If true: throw to monkey 2
+    If false: throw to monkey 3
+"#,
+        );
+        let (remaining, monkey) = res.unwrap();
+        assert_eq!(remaining.len(), 0);
+        assert_eq!(monkey.id, 0);
+        assert_eq!(monkey.items, vec![79, 98]);
+        assert_eq!(monkey.operation, Op::Multiply);
+        assert_eq!(monkey.operand, Operand::Literal(19));
+        assert_eq!(monkey.test.modulus, 23);
+        assert_eq!(monkey.test.true_target, 2);
+        assert_eq!(monkey.test.false_target, 3);
+    }
 }
