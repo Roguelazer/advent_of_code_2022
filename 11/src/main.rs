@@ -15,6 +15,10 @@ enum Mode {
 struct Args {
     #[clap(short, long, value_enum)]
     mode: Mode,
+    #[clap(short, long, value_parser)]
+    rounds: Option<usize>,
+    #[clap(short, long, value_parser)]
+    verbose: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -39,26 +43,12 @@ enum Op {
 }
 
 impl Op {
-    fn apply(&self, item: i64, operand: &Operand) -> i64 {
+    fn apply(&self, item: i64, operand: &Operand, modulus: i64) -> i64 {
+        let lhs = operand.value(item) % modulus;
+        let rhs = item % modulus;
         match self {
-            Op::Add => operand.value(item) + item,
-            Op::Multiply => operand.value(item).wrapping_mul(item),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum TestOp {
-    Divisible,
-}
-
-impl TestOp {
-    fn matches(&self, item: i64, operand: &Operand) -> bool {
-        match self {
-            Self::Divisible => {
-                let value = operand.value(item);
-                item % value == 0
-            }
+            Op::Add => lhs.checked_add(rhs).unwrap() % modulus,
+            Op::Multiply => lhs.checked_mul(rhs).unwrap() % modulus,
         }
     }
 }
@@ -77,8 +67,7 @@ impl FromStr for Operand {
 
 #[derive(Debug)]
 struct Test {
-    operation: TestOp,
-    operand: Operand,
+    modulus: i64,
     true_target: usize,
     false_target: usize,
 }
@@ -91,7 +80,6 @@ struct Action {
 
 #[derive(Debug)]
 struct Monkey {
-    #[allow(dead_code)]
     id: usize,
     inspections: usize,
     items: Vec<i64>,
@@ -101,17 +89,16 @@ struct Monkey {
 }
 
 impl Monkey {
-    fn simulate(&mut self, div_level: bool) -> Vec<Action> {
+    fn simulate(&mut self, common_modulus: i64, div_level: bool) -> Vec<Action> {
         self.items
             .drain(0..)
             .map(|item| {
                 self.inspections += 1;
-                println!("applying {:?} to {}", self.operation, item);
-                let mut new_cost = self.operation.apply(item, &self.operand);
+                let mut new_cost = self.operation.apply(item, &self.operand, common_modulus);
                 if div_level {
                     new_cost /= 3;
                 }
-                if self.test.operation.matches(new_cost, &self.test.operand) {
+                if new_cost % self.test.modulus == 0 {
                     Action {
                         item: new_cost,
                         target: self.test.true_target,
@@ -170,12 +157,11 @@ fn parse_monkeys<R: BufRead>(io: &mut R) -> anyhow::Result<Vec<Monkey>> {
         };
         let test_s = monkey_chunk.next().unwrap();
         let test_s = test_s.split(':').nth(1);
-        let (test_op, test_operand) =
-            if let Some(rest) = test_s.and_then(|s| s.strip_prefix(" divisible by ")) {
-                (TestOp::Divisible, rest.parse::<Operand>()?)
-            } else {
-                anyhow::bail!("unknown operation {:?}", test_s)
-            };
+        let modulus = if let Some(rest) = test_s.and_then(|s| s.strip_prefix(" divisible by ")) {
+            rest.parse::<i64>()?
+        } else {
+            anyhow::bail!("unknown operation {:?}", test_s)
+        };
         let true_value = monkey_chunk.next().unwrap();
         let true_target = if let Some((_, id)) = true_value
             .trim()
@@ -197,8 +183,7 @@ fn parse_monkeys<R: BufRead>(io: &mut R) -> anyhow::Result<Vec<Monkey>> {
             anyhow::bail!("unknown action {:?}", true_value);
         };
         let test = Test {
-            operation: test_op,
-            operand: test_operand,
+            modulus,
             true_target,
             false_target,
         };
@@ -214,9 +199,12 @@ fn parse_monkeys<R: BufRead>(io: &mut R) -> anyhow::Result<Vec<Monkey>> {
     Ok(monkeys)
 }
 
-fn simulate_round(monkeys: &mut Vec<Monkey>, div_level: bool) {
+fn simulate_round(monkeys: &mut Vec<Monkey>, common_modulus: i64, div_level: bool) {
     for index in 0..monkeys.len() {
-        let actions = monkeys.get_mut(index).unwrap().simulate(div_level);
+        let actions = monkeys
+            .get_mut(index)
+            .unwrap()
+            .simulate(common_modulus, div_level);
         for action in actions {
             monkeys
                 .get_mut(action.target)
@@ -232,12 +220,25 @@ fn main() -> anyhow::Result<()> {
     let stdin_r = std::io::stdin();
     let mut stdin = stdin_r.lock();
     let mut monkeys = parse_monkeys(&mut stdin)?;
-    let rounds = match args.mode {
-        Mode::Part1 => 20,
-        Mode::Part2 => 10000,
+    let common_modulus = monkeys.iter().fold(1, |a, m| a * m.test.modulus);
+    let rounds = match args.rounds {
+        Some(r) => r,
+        None => match args.mode {
+            Mode::Part1 => 20,
+            Mode::Part2 => 10000,
+        },
     };
-    for _ in 0..rounds {
-        simulate_round(&mut monkeys, args.mode == Mode::Part1);
+    for round in 0..rounds {
+        simulate_round(&mut monkeys, common_modulus, args.mode == Mode::Part1);
+        if args.verbose {
+            println!("== After round {} ==", round);
+            for monkey in monkeys.iter() {
+                println!(
+                    "Monkey {} inspected items {} times",
+                    monkey.id, monkey.inspections
+                );
+            }
+        }
     }
     let too_much = monkeys
         .iter()
