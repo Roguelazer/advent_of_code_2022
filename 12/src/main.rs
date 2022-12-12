@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
@@ -85,7 +86,6 @@ impl FromStr for Grid {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let height = cells.len();
-        let width = cells[0].len();
         let mut graph = DiGraph::new();
         let mut coordinates = BTreeMap::new();
         cells.iter().enumerate().for_each(|(y, row)| {
@@ -93,32 +93,19 @@ impl FromStr for Grid {
                 coordinates.insert((x, y), graph.add_node(()));
             })
         });
-        for ((x, y), this_node) in coordinates.iter() {
-            let mut neighbors = vec![];
-            let x = *x;
-            let y = *y;
-            if x == 0 {
-                neighbors.push((x + 1, y));
-            } else if x + 1 == width {
-                neighbors.push((x - 1, y));
-            } else {
-                neighbors.push((x + 1, y));
-                neighbors.push((x - 1, y));
-            }
-
-            if y == 0 {
-                neighbors.push((x, y + 1));
-            } else if y + 1 == height {
-                neighbors.push((x, y - 1));
-            } else {
-                neighbors.push((x, y + 1));
-                neighbors.push((x, y - 1));
-            }
-            for neighbor in neighbors.into_iter() {
-                let neighbor_val = cells[neighbor.1][neighbor.0];
-                let my_val = cells[y][x];
-                if neighbor_val <= my_val + 1 {
-                    graph.add_edge(*this_node, *coordinates.get(&neighbor).unwrap(), ());
+        // find all the adjacent cells that we could move to and fill out the graph
+        for ((x, y), this_node) in coordinates.iter().map(|((x, y), i)| ((*x, *y), *i)) {
+            for possible_x in x.saturating_sub(1)..=min(x + 1, cells[y].len() - 1) {
+                for possible_y in y.saturating_sub(1)..=min(y + 1, height - 1) {
+                    if (possible_x == x || possible_y == y) && ((possible_x, possible_y) != (x, y))
+                    {
+                        let neighbor_node = *coordinates.get(&(possible_x, possible_y)).unwrap();
+                        let neighbor_val = cells[possible_y][possible_x];
+                        let my_val = cells[y][x];
+                        if neighbor_val <= my_val + 1 {
+                            graph.add_edge(this_node, neighbor_node, ());
+                        }
+                    }
                 }
             }
         }
