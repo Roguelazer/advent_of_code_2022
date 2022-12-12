@@ -16,13 +16,15 @@ enum Mode {
 struct Args {
     #[clap(short, long, value_enum)]
     mode: Mode,
+    #[clap(short, long, value_parser)]
+    output_dot: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug)]
 struct Grid {
     cells: Vec<Vec<u8>>,
     graph_indices: BTreeMap<(usize, usize), petgraph::graph::NodeIndex>,
-    graph: DiGraph<(), ()>,
+    graph: DiGraph<(usize, usize), ()>,
     start_coordinate: (usize, usize),
     end_coordinate: (usize, usize),
 }
@@ -90,7 +92,7 @@ impl FromStr for Grid {
         let mut coordinates = BTreeMap::new();
         cells.iter().enumerate().for_each(|(y, row)| {
             row.iter().enumerate().for_each(|(x, _)| {
-                coordinates.insert((x, y), graph.add_node(()));
+                coordinates.insert((x, y), graph.add_node((x, y)));
             })
         });
         // find all the adjacent cells that we could move to and fill out the graph
@@ -125,6 +127,13 @@ fn main() -> anyhow::Result<()> {
     let stdin = std::io::stdin();
     let input = std::io::read_to_string(stdin)?;
     let grid = input.parse::<Grid>()?;
+    if let Some(output_path) = args.output_dot {
+        let graph = format!(
+            "{:?}",
+            petgraph::dot::Dot::with_config(&grid.graph, &[petgraph::dot::Config::EdgeNoLabel])
+        );
+        std::fs::write(output_path, graph)?;
+    }
     let res = match args.mode {
         Mode::Part1 => grid.shortest_path(),
         Mode::Part2 => grid.shortest_paths_any_start(),
