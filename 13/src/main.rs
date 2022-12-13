@@ -7,7 +7,7 @@ use nom::{
     branch::alt,
     bytes::complete::tag,
     combinator::map,
-    multi::{separated_list0, separated_list1},
+    multi::{many1, separated_list0, separated_list1},
     sequence::{delimited, pair, terminated},
     IResult,
 };
@@ -93,9 +93,18 @@ fn parse_packets(s: &str) -> IResult<&str, Vec<(Packet, Packet)>> {
     )(s)
 }
 
-fn parse_all_packets(s: &str) -> anyhow::Result<Vec<(Packet, Packet)>> {
+fn parse_packet_pairs(s: &str) -> anyhow::Result<Vec<(Packet, Packet)>> {
     let (remainder, packets) =
         parse_packets(s).map_err(|e| anyhow::anyhow!("error parsing: {:?}", e))?;
+    if !remainder.trim().is_empty() {
+        anyhow::bail!("unconsumed input {:?}", remainder);
+    }
+    Ok(packets)
+}
+
+fn parse_all_packets(s: &str) -> anyhow::Result<Vec<Packet>> {
+    let (remainder, packets) = separated_list1(many1(tag("\n")), parse_packet)(s)
+        .map_err(|e| anyhow::anyhow!("error parsing {:?}", e))?;
     if !remainder.trim().is_empty() {
         anyhow::bail!("unconsumed input {:?}", remainder);
     }
@@ -106,9 +115,8 @@ fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let stdin = std::io::stdin();
     let input = std::io::read_to_string(stdin)?;
-    let packets = parse_all_packets(&input)?;
     if args.mode == Mode::Part1 {
-        let ok_indices = packets
+        let ok_indices = parse_packet_pairs(&input)?
             .into_iter()
             .enumerate()
             .filter_map(|(i, (lhs, rhs))| {
@@ -131,13 +139,9 @@ fn main() -> anyhow::Result<()> {
             Packet::List(vec![Packet::List(vec![Packet::Number(2)])]),
             Packet::List(vec![Packet::List(vec![Packet::Number(6)])]),
         ];
-        let mut all_packets = vec![];
+        let mut all_packets = parse_all_packets(&input)?;
         all_packets.push(delimiters[0].clone());
         all_packets.push(delimiters[1].clone());
-        for (lhs, rhs) in packets.into_iter() {
-            all_packets.push(lhs);
-            all_packets.push(rhs);
-        }
         all_packets.sort();
         if args.verbose {
             for packet in &all_packets {
