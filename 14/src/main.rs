@@ -5,6 +5,8 @@ use nom::{
     sequence::separated_pair, IResult,
 };
 
+use aoclib::{DenseGrid, Point};
+
 #[derive(ValueEnum, Debug, PartialEq, Eq, Clone, Copy)]
 enum Mode {
     Part1,
@@ -20,83 +22,17 @@ struct Args {
     verbose: bool,
 }
 
-#[derive(Debug)]
-struct LineToStruct {
-    start: Point,
-    end: Point,
-    direction: Point,
-    done: bool,
-}
-
-impl LineToStruct {
-    fn new(start: Point, end: Point) -> Self {
-        debug_assert!(start.x == end.x || start.y == end.y);
-        let dir = if start.x == end.x {
-            if start.y < end.y {
-                Point { x: 0, y: 1 }
-            } else {
-                Point { x: 0, y: -1 }
-            }
-        } else {
-            if start.x < end.x {
-                Point { x: 1, y: 0 }
-            } else {
-                Point { x: -1, y: 0 }
-            }
-        };
-        Self {
-            start,
-            end,
-            direction: dir,
-            done: false,
-        }
-    }
-}
-
-impl Iterator for LineToStruct {
-    type Item = Point;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
-        let current = self.start;
-        if self.start == self.end {
-            self.done = true
-        }
-        self.start = self.start + self.direction;
-        Some(current)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Point {
-    x: i32,
-    y: i32,
-}
-
-impl std::ops::Add for Point {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self {
-        Point {
-            x: self.x + other.x,
-            y: self.y + other.y,
-        }
-    }
-}
-
-impl Point {
-    fn line_to(&self, other: Self) -> impl Iterator<Item = Point> {
-        LineToStruct::new(*self, other)
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Cell {
     Empty,
     Rock,
     Sand,
+}
+
+impl aoclib::HasEmpty for Cell {
+    fn empty_value() -> Self {
+        Self::Empty
+    }
 }
 
 impl Cell {
@@ -115,57 +51,28 @@ impl Cell {
 
 #[derive(Debug)]
 struct Scene {
-    width: usize,
-    height: usize,
-    cells: Vec<Cell>,
+    grid: DenseGrid<Cell>,
     current_sand: Option<Point>,
     sand_created: usize,
 }
 
 impl Scene {
-    fn new(width: i32, height: i32) -> Self {
+    fn new(top_left: Point, bottom_right: Point) -> Self {
         Scene {
-            width: width as usize,
-            height: height as usize,
-            cells: vec![Cell::Empty; width as usize * height as usize],
+            grid: DenseGrid::new(top_left, bottom_right),
             current_sand: None,
             sand_created: 0,
         }
     }
 
-    fn index_for(&self, coordinate: Point) -> usize {
-        coordinate.x as usize + self.width * (coordinate.y as usize)
-    }
-
-    fn set(&mut self, coordinate: Point, contents: Cell) {
-        let index = self.index_for(coordinate);
-        self.cells[index] = contents;
-    }
-
-    fn get(&self, coordinate: Point) -> Cell {
-        let index = self.index_for(coordinate);
-        self.cells[index]
-    }
-
     fn add_path(&mut self, start: Point, end: Point, of: Cell) {
         for coordinate in start.line_to(end) {
-            self.set(coordinate, of);
+            self.grid.set(coordinate, of);
         }
     }
 
     fn dump(&self) {
-        for y in 0..self.height {
-            let cells = (400..self.width)
-                .map(|x| {
-                    self.get(Point {
-                        x: x as i32,
-                        y: y as i32,
-                    })
-                    .as_char()
-                })
-                .collect::<String>();
-            println!("{}", cells);
-        }
+        self.grid.dump_with(|c| c.as_char())
     }
 
     fn step(&mut self) -> bool {
@@ -173,21 +80,24 @@ impl Scene {
             let down = coordinate + Point { x: 0, y: 1 };
             let down_left = coordinate + Point { x: -1, y: 1 };
             let down_right = coordinate + Point { x: 1, y: 1 };
-            if down.y >= self.height as i32 || down.x >= self.width as i32 {
+            if !self.grid.contains(down)
+                || !self.grid.contains(down_left)
+                || !self.grid.contains(down_right)
+            {
                 self.sand_created -= 1;
                 return false;
             }
-            if self.get(down).is_empty() {
+            if self.grid[down].is_empty() {
                 self.current_sand = Some(down);
-            } else if self.get(down_left).is_empty() {
+            } else if self.grid[down_left].is_empty() {
                 self.current_sand = Some(down_left);
-            } else if self.get(down_right).is_empty() {
+            } else if self.grid[down_right].is_empty() {
                 self.current_sand = Some(down_right);
             } else {
-                self.set(coordinate, Cell::Sand);
+                self.grid[coordinate] = Cell::Sand;
             }
         } else {
-            if self.get(Point { x: 500, y: 0 }).is_empty() {
+            if self.grid[Point { x: 500, y: 0 }].is_empty() {
                 self.sand_created += 1;
                 self.current_sand = Some(Point { x: 500, y: 0 });
             } else {
@@ -206,15 +116,13 @@ fn parse_path(s: &str) -> IResult<&str, Vec<Point>> {
     separated_list1(
         tag(" -> "),
         map(
-            separated_pair(character::complete::i32, tag(","), character::complete::i32),
+            separated_pair(character::complete::i64, tag(","), character::complete::i64),
             |(x, y)| Point { x, y },
         ),
     )(s)
 }
 
 fn parse_scene(s: &str, mode: Mode) -> anyhow::Result<Scene> {
-    let min_x = 0;
-    let min_y = 0;
     let paths = s
         .split('\n')
         .filter(|l| !l.is_empty())
@@ -228,24 +136,43 @@ fn parse_scene(s: &str, mode: Mode) -> anyhow::Result<Scene> {
             Ok(path)
         })
         .collect::<anyhow::Result<Vec<Vec<Point>>>>()?;
-    let max_x = paths
+    let min_x = paths
         .iter()
-        .filter_map(|path| path.iter().map(|coordinate| coordinate.x).max())
-        .max()
+        .filter_map(|path| path.iter().map(|coordinate| coordinate.x).min())
+        .min()
         .unwrap();
+    let max_x = std::cmp::max(
+        paths
+            .iter()
+            .filter_map(|path| path.iter().map(|coordinate| coordinate.x).max())
+            .max()
+            .unwrap(),
+        500,
+    );
+    let min_y = std::cmp::min(
+        paths
+            .iter()
+            .filter_map(|path| path.iter().map(|coordinate| coordinate.y).min())
+            .min()
+            .unwrap(),
+        0,
+    );
     let max_y = paths
         .iter()
         .filter_map(|path| path.iter().map(|coordinate| coordinate.y).max())
         .max()
         .unwrap();
-    let height = 4 + max_y - min_y;
-    let width = if mode == Mode::Part2 {
-        // close enough to infinity
-        1000
+    let top_left = if mode == Mode::Part2 {
+        Point::new(min_x - 100, min_y)
     } else {
-        1 + max_x - min_x
+        Point::new(min_x, min_y)
     };
-    let mut scene = Scene::new(width, height);
+    let bottom_right = if mode == Mode::Part2 {
+        Point::new(max_x + 100, max_y + 2)
+    } else {
+        Point::new(max_x, max_y)
+    };
+    let mut scene = Scene::new(top_left, bottom_right);
     for path in paths.into_iter() {
         for (lhs, rhs) in path.into_iter().tuple_windows() {
             scene.add_path(lhs, rhs, Cell::Rock);
@@ -255,7 +182,7 @@ fn parse_scene(s: &str, mode: Mode) -> anyhow::Result<Scene> {
         scene.add_path(
             Point { x: 0, y: max_y + 2 },
             Point {
-                x: width,
+                x: 1000,
                 y: max_y + 2,
             },
             Cell::Rock,
