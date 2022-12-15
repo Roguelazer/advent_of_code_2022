@@ -1,4 +1,7 @@
+use std::ops::RangeInclusive;
+
 use clap::{Parser, ValueEnum};
+use itertools::Itertools;
 use nom::{
     bytes::complete::tag,
     combinator::map,
@@ -41,6 +44,30 @@ impl SensorLine {
             me,
             neighbor,
             radius,
+        }
+    }
+
+    fn occludes(&self, point: Point) -> bool {
+        self.me.manhattan_distance_to(point) <= self.radius
+    }
+
+    fn projected_to_x(&self, x: i64) -> Option<RangeInclusive<i64>> {
+        if (self.me.x - x).abs() > self.radius as i64 {
+            None
+        } else {
+            let distance = (self.me.x - x).abs();
+            let radius_at_distance = self.radius as i64 - distance;
+            Some((self.me.y - radius_at_distance)..=(self.me.y + radius_at_distance))
+        }
+    }
+
+    fn projected_to_y(&self, y: i64) -> Option<RangeInclusive<i64>> {
+        if (self.me.y - y).abs() > self.radius as i64 {
+            None
+        } else {
+            let distance = (self.me.y - y).abs();
+            let radius_at_distance = self.radius as i64 - distance;
+            Some((self.me.x - radius_at_distance)..=(self.me.x + radius_at_distance))
         }
     }
 }
@@ -92,24 +119,24 @@ fn main() -> anyhow::Result<()> {
     let stdin = std::io::stdin();
     let input = std::io::read_to_string(stdin)?;
     let lines = parse_sensor_lines(&input)?;
-    let possible_x_coordinates = lines
-        .iter()
-        .filter_map(|sensor| {
-            let distance = sensor.me.y.abs_diff(args.target_line);
-            if distance <= sensor.radius as u64 {
-                Some(sensor)
-            } else {
-                None
-            }
-        })
-        .inspect(|p| log::debug!("intersection with {:?}", p))
-        .map(|sensor| {
-            let min_x = sensor.me.x - sensor.radius as i64;
-            let max_x = sensor.me.x + sensor.radius as i64;
-            min_x..=max_x
-        })
-        .collect::<Vec<_>>();
     if args.mode == Mode::Part1 {
+        let possible_x_coordinates = lines
+            .iter()
+            .filter_map(|sensor| {
+                let distance = sensor.me.y.abs_diff(args.target_line);
+                if distance <= sensor.radius as u64 {
+                    Some(sensor)
+                } else {
+                    None
+                }
+            })
+            .inspect(|p| log::debug!("intersection with {:?}", p))
+            .map(|sensor| {
+                let min_x = sensor.me.x - sensor.radius as i64;
+                let max_x = sensor.me.x + sensor.radius as i64;
+                min_x..=max_x
+            })
+            .collect::<Vec<_>>();
         log::debug!("possible_x_coordinates: {:?}", possible_x_coordinates);
         let min_x = possible_x_coordinates
             .iter()
@@ -128,7 +155,7 @@ fn main() -> anyhow::Result<()> {
                 let point = Point::new(x, args.target_line);
                 if lines
                     .iter()
-                    .any(|s| s.neighbor != point && s.me.manhattan_distance_to(point) <= s.radius)
+                    .any(|s| s.neighbor != point && s.occludes(point))
                 {
                     1
                 } else {
@@ -138,6 +165,55 @@ fn main() -> anyhow::Result<()> {
             .sum::<usize>();
         println!("covered: {:?}", covered);
     } else {
+        let min = 0;
+        let max = args.target_line;
+        let non_covered_x = (min..=max)
+            .find(|x| {
+                let mut current = None;
+                for range in lines
+                    .iter()
+                    .filter_map(|sensor| sensor.projected_to_x(*x))
+                    .sorted_by_key(|r| *r.start())
+                {
+                    match current {
+                        None => current = Some(range),
+                        Some(c) if *range.start() <= *c.end() + 1 => {
+                            current = Some(*c.start()..=std::cmp::max(*range.end(), *c.end()))
+                        }
+                        _ => {
+                            return true;
+                        }
+                    }
+                }
+                false
+            })
+            .unwrap();
+        let non_covered_y = (min..=max)
+            .find(|y| {
+                let mut current = None;
+                for range in lines
+                    .iter()
+                    .filter_map(|sensor| sensor.projected_to_y(*y))
+                    .sorted_by_key(|r| *r.start())
+                {
+                    match current {
+                        None => current = Some(range),
+                        Some(c) if *range.start() <= *c.end() + 1 => {
+                            current = Some(*c.start()..=std::cmp::max(*range.end(), *c.end()))
+                        }
+                        _ => {
+                            return true;
+                        }
+                    }
+                }
+                false
+            })
+            .unwrap();
+        let point = Point::new(non_covered_x, non_covered_y);
+        if lines.iter().any(|s| s.occludes(point)) {
+            panic!("uh oh! occlusion!")
+        }
+        println!("{}", point.x * 4000000 + point.y)
     }
     Ok(())
 }

@@ -1,8 +1,29 @@
 use std::fmt;
 
-pub trait DimVal: num_traits::Signed + std::cmp::Ord + std::cmp::Eq + Clone + Copy {}
+pub trait DimVal:
+    num_traits::Signed
+    + num_traits::ToPrimitive
+    + std::cmp::Ord
+    + std::cmp::Eq
+    + Clone
+    + Copy
+    + std::fmt::Display
+    + std::fmt::Debug
+{
+}
 
-impl<S: num_traits::Signed + std::cmp::Ord + std::cmp::Eq + Clone + Copy> DimVal for S {}
+impl<
+        S: num_traits::Signed
+            + num_traits::ToPrimitive
+            + std::cmp::Ord
+            + std::cmp::Eq
+            + Clone
+            + Copy
+            + std::fmt::Display
+            + std::fmt::Debug,
+    > DimVal for S
+{
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Point<I: DimVal = i64> {
@@ -17,6 +38,13 @@ impl<I: DimVal> Point<I> {
 
     pub fn line_to(&self, other: Point<I>) -> impl Iterator<Item = Point<I>> {
         LineToIter::new(self.clone(), other)
+    }
+
+    pub fn manhattan_distance_to(&self, other: Point<I>) -> usize {
+        let val = ((self.x - other.x).abs() + (self.y - other.y).abs())
+            .to_u64()
+            .unwrap() as usize;
+        val
     }
 }
 
