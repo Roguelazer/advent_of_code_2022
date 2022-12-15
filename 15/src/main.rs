@@ -26,13 +26,12 @@ struct Args {
     #[clap(short, long)]
     verbose: bool,
     #[clap(short, long, value_parser)]
-    target_line: i64,
+    param: i64,
 }
 
 #[derive(Debug)]
 struct Sensor {
     me: Point,
-    #[allow(dead_code)]
     neighbor: Point,
     radius: usize,
 }
@@ -106,12 +105,12 @@ fn parse_sensor_lines(s: &str) -> anyhow::Result<Vec<Sensor>> {
 
 fn has_gap_in_ranges(i: &mut Vec<RangeInclusive<i64>>, min: i64, max: i64) -> bool {
     merge_ranges(i);
-    i.iter().tuple_windows().any(|(lhs, rhs)| {
-        *lhs.end() > min && *rhs.start() > min && *lhs.end() < max && *rhs.start() < max
-    })
+    i.iter()
+        .tuple_windows()
+        .any(|(lhs, rhs)| *lhs.end() > min && *rhs.start() > min && *lhs.end() < max)
 }
 
-fn merge_ranges(r: &mut Vec<RangeInclusive<i64>>) -> () {
+fn merge_ranges(r: &mut Vec<RangeInclusive<i64>>) {
     if r.len() < 2 {
         return;
     }
@@ -151,7 +150,7 @@ fn main() -> anyhow::Result<()> {
     if args.mode == Mode::Part1 {
         let mut covered_ranges = lines
             .iter()
-            .filter_map(|sensor| sensor.projected_to_y(args.target_line))
+            .filter_map(|sensor| sensor.projected_to_y(args.param))
             .collect::<Vec<_>>();
         covered_ranges.sort_by_key(|r| *r.start());
         log::debug!("covered before merging: {:?}", covered_ranges);
@@ -159,7 +158,7 @@ fn main() -> anyhow::Result<()> {
         log::debug!("covered after merging: {:?}", covered_ranges);
         let beacons_in_range = lines
             .iter()
-            .filter(|s| s.neighbor.y == args.target_line)
+            .filter(|s| s.neighbor.y == args.param)
             .filter(|s| covered_ranges.iter().any(|r| r.contains(&s.neighbor.x)))
             .map(|s| s.neighbor.x)
             .unique()
@@ -173,30 +172,38 @@ fn main() -> anyhow::Result<()> {
         println!("covered: {:?}", covered);
     } else {
         let min = 0;
-        let max = args.target_line;
+        let max = args.param;
         let mut buf = Vec::with_capacity(lines.len());
         log::debug!("scanning for potential x coordinates");
         let non_covered_x = (min..=max)
-            .find(|x| {
+            .filter(|x| {
                 buf.clear();
                 buf.extend(lines.iter().filter_map(|sensor| sensor.projected_to_x(*x)));
                 has_gap_in_ranges(&mut buf, min, max)
             })
-            .unwrap();
+            .collect::<Vec<i64>>();
         log::debug!("scanning for potential y coordinates");
         let non_covered_y = (min..=max)
-            .find(|y| {
+            .filter(|y| {
                 buf.clear();
                 buf.extend(lines.iter().filter_map(|sensor| sensor.projected_to_y(*y)));
                 has_gap_in_ranges(&mut buf, min, max)
             })
-            .unwrap();
-        let point = Point::new(non_covered_x, non_covered_y);
-        log::debug!("double-checking for occlusions");
-        if lines.iter().any(|s| s.occludes(point)) {
-            panic!("uh oh! occlusion!")
+            .collect::<Vec<i64>>();
+        log::debug!(
+            "found {} x coordinates and {} y coordinates",
+            non_covered_x.len(),
+            non_covered_y.len()
+        );
+        'outer: for x in non_covered_x {
+            for y in &non_covered_y {
+                let point = Point::new(x, *y);
+                if !lines.iter().any(|s| s.occludes(point)) {
+                    log::info!("Frequency {} at {}", point.x * args.param + point.y, point);
+                    break 'outer;
+                }
+            }
         }
-        log::info!("Frequency {} at {}", point.x * 4000000 + point.y, point);
         log::debug!("succeeded in {:?}", start.elapsed());
     }
     Ok(())
