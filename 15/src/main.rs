@@ -1,6 +1,7 @@
 use std::ops::RangeInclusive;
 
 use clap::{Parser, ValueEnum};
+use itertools::Itertools;
 use nom::{
     bytes::complete::tag,
     combinator::map,
@@ -103,26 +104,31 @@ fn parse_sensor_lines(s: &str) -> anyhow::Result<Vec<Sensor>> {
     Ok(lines)
 }
 
-/// Merge together an iterator of RangeInclusive objects and find whether there are any gaps
-/// between min..=max
-fn has_gap_in_ranges<I: Iterator<Item = RangeInclusive<i64>>>(i: I, min: i64, max: i64) -> bool {
-    let mut current = None;
-    for range in i {
-        match current {
-            None => current = Some(range),
-            Some(c) if *range.start() <= *c.end() + 1 => {
-                current = Some(*c.start()..=std::cmp::max(*range.end(), *c.end()))
-            }
-            Some(c) => {
-                if *c.end() < min || *c.start() > max {
-                    current = Some(range)
-                } else {
-                    return true;
-                }
-            }
+fn has_gap_in_ranges(i: &mut Vec<RangeInclusive<i64>>, min: i64, max: i64) -> bool {
+    merge_ranges(i);
+    i.iter().tuple_windows().any(|(lhs, rhs)| {
+        *lhs.end() > min && *rhs.start() > min && *lhs.end() < max && *rhs.start() < max
+    })
+}
+
+fn merge_ranges(r: &mut Vec<RangeInclusive<i64>>) -> () {
+    if r.len() < 2 {
+        return;
+    }
+    r.sort_by_key(|r| *r.start());
+    let (mut current, mut current_index) = (r[0].clone(), 0);
+    for i in 1..r.len() {
+        let this = r[i].clone();
+        if *this.start() <= *current.end() + 1 {
+            current = *current.start()..=std::cmp::max(*this.end(), *current.end());
+            r[current_index] = current.clone();
+        } else {
+            current_index += 1;
+            current = this.clone();
+            r[current_index] = this.clone();
         }
     }
-    false
+    r.truncate(current_index + 1);
 }
 
 fn main() -> anyhow::Result<()> {
@@ -143,49 +149,27 @@ fn main() -> anyhow::Result<()> {
     log::debug!("parsing input");
     let lines = parse_sensor_lines(&input)?;
     if args.mode == Mode::Part1 {
-        let possible_x_coordinates = lines
+        let mut covered_ranges = lines
             .iter()
-            .filter_map(|sensor| {
-                let distance = sensor.me.y.abs_diff(args.target_line);
-                if distance <= sensor.radius as u64 {
-                    Some(sensor)
-                } else {
-                    None
-                }
-            })
-            .inspect(|p| log::debug!("intersection with {:?}", p))
-            .map(|sensor| {
-                let min_x = sensor.me.x - sensor.radius as i64;
-                let max_x = sensor.me.x + sensor.radius as i64;
-                min_x..=max_x
-            })
+            .filter_map(|sensor| sensor.projected_to_y(args.target_line))
             .collect::<Vec<_>>();
-        log::debug!("possible_x_coordinates: {:?}", possible_x_coordinates);
-        let min_x = possible_x_coordinates
+        covered_ranges.sort_by_key(|r| *r.start());
+        log::debug!("covered before merging: {:?}", covered_ranges);
+        merge_ranges(&mut covered_ranges);
+        log::debug!("covered after merging: {:?}", covered_ranges);
+        let beacons_in_range = lines
             .iter()
-            .map(|r| *r.start())
-            .min()
-            .unwrap();
-        let max_x = possible_x_coordinates
-            .iter()
-            .map(|r| *r.end())
-            .max()
-            .unwrap();
-        log::debug!("inspecting {:?}", min_x..=max_x);
-        let covered = (min_x..=max_x)
-            .filter(|x| possible_x_coordinates.iter().any(|c| c.contains(x)))
-            .map(|x| {
-                let point = Point::new(x, args.target_line);
-                if lines
-                    .iter()
-                    .any(|s| s.neighbor != point && s.occludes(point))
-                {
-                    1
-                } else {
-                    0
-                }
-            })
-            .sum::<usize>();
+            .filter(|s| s.neighbor.y == args.target_line)
+            .filter(|s| covered_ranges.iter().any(|r| r.contains(&s.neighbor.x)))
+            .map(|s| s.neighbor.x)
+            .unique()
+            .count() as u64;
+        log::debug!("there are {} beacons on the line", beacons_in_range);
+        let covered = covered_ranges
+            .into_iter()
+            .map(|r| r.end().abs_diff(*r.start()) + 1)
+            .sum::<u64>()
+            - beacons_in_range;
         println!("covered: {:?}", covered);
     } else {
         let min = 0;
@@ -196,8 +180,7 @@ fn main() -> anyhow::Result<()> {
             .find(|x| {
                 buf.clear();
                 buf.extend(lines.iter().filter_map(|sensor| sensor.projected_to_x(*x)));
-                buf.sort_by_key(|r| *r.start());
-                has_gap_in_ranges(buf.drain(0..), min, max)
+                has_gap_in_ranges(&mut buf, min, max)
             })
             .unwrap();
         log::debug!("scanning for potential y coordinates");
@@ -205,8 +188,7 @@ fn main() -> anyhow::Result<()> {
             .find(|y| {
                 buf.clear();
                 buf.extend(lines.iter().filter_map(|sensor| sensor.projected_to_y(*y)));
-                buf.sort_by_key(|r| *r.start());
-                has_gap_in_ranges(buf.drain(0..), min, max)
+                has_gap_in_ranges(&mut buf, min, max)
             })
             .unwrap();
         let point = Point::new(non_covered_x, non_covered_y);
