@@ -1,0 +1,23 @@
+[package]
+name = "aoc2022"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "aoclib"
+path = "src/aoclib/lib.rs"
+
+[dependencies]
+anyhow = "1.0.66"
+bit-set = "0.5.3"
+clap = { version = "4.0.29", features = ["derive"] }
+crossterm = "0.25.0"
+ctrlc = "3.2.4"
+derive_more = "0.99.17"
+env_logger = "0.10.0"
+itertools = "0.10.5"
+log = "0.4.17"
+nom = "7.1.1"
+nonempty = { version = "0.8.1", features = ["serde"] }
+num-traits = "0.2.15"
+petgraph = "0.6.2"
