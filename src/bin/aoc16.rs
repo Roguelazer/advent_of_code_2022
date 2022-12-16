@@ -1,6 +1,7 @@
 use std::cmp::max;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
+use bit_set::BitSet;
 use clap::{Parser, ValueEnum};
 use nom::{
     bytes::complete::tag,
@@ -10,7 +11,8 @@ use nom::{
     sequence::preceded,
     IResult,
 };
-use petgraph::graph::{NodeIndex, UnGraph};
+use petgraph::algo::floyd_warshall::floyd_warshall;
+use petgraph::graph::{DiGraph, NodeIndex};
 
 #[derive(ValueEnum, Debug, PartialEq, Eq, Clone, Copy)]
 enum Mode {
@@ -104,8 +106,9 @@ impl Line {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Scene {
-    graph: UnGraph<ValveName, f32>,
+    graph: DiGraph<ValveName, ()>,
     nodes: BTreeMap<ValveName, NodeIndex>,
     openable_valves: BTreeMap<ValveName, u64>,
 }
@@ -117,7 +120,7 @@ impl Scene {
         if !remaining.trim().is_empty() {
             anyhow::bail!("unparsed input {:?}", remaining);
         }
-        let mut graph = UnGraph::new_undirected();
+        let mut graph = DiGraph::new();
         let mut nodes = BTreeMap::new();
         let mut openable_valves = BTreeMap::new();
 
@@ -132,7 +135,7 @@ impl Scene {
                 let that = *nodes
                     .entry(neighbor)
                     .or_insert_with(|| graph.add_node(neighbor));
-                graph.update_edge(this, that, 1.0);
+                graph.add_edge(this, that, ());
             }
         }
         Ok(Scene {
@@ -142,7 +145,21 @@ impl Scene {
         })
     }
 
-    fn find_best_rec(&self, state: State, context: &mut Context, is_part2: bool) -> u64 {
+    fn find_best_rec(
+        &self,
+        state: State,
+        context: &mut Context,
+        is_part2: bool,
+        depth: usize,
+    ) -> u64 {
+        let prefix = std::iter::repeat(" ").take(depth).collect::<String>();
+        log::debug!(
+            "{0} at {1} [t={2}, d={3}]",
+            prefix,
+            state.position,
+            state.remaining,
+            depth,
+        );
         if let Some(v) = context.memo.get(&state) {
             return *v;
         }
@@ -152,15 +169,13 @@ impl Scene {
                 new_state.remaining = 26;
                 new_state.position = ValveName::try_from("AA").unwrap();
                 new_state.is_part2 = false;
-                self.find_best_rec(new_state, context, false)
+                self.find_best_rec(new_state, context, false, depth + 1)
             } else {
                 0
             }
         } else if context.is_done(&state) {
             0
         } else {
-            let my_node = self.nodes[&state.position];
-
             let mut res = 0;
 
             if let Some(my_flow_rate) = self.openable_valves.get(&state.position) {
@@ -168,18 +183,27 @@ impl Scene {
                     let this_contribution = (state.remaining - 1) as u64 * my_flow_rate;
                     let mut next = state.next();
                     next.open(&state.position);
+                    log::debug!("{0} opening {1}", prefix, state.position);
                     res = max(
                         res,
-                        this_contribution + self.find_best_rec(next, context, is_part2),
+                        this_contribution + self.find_best_rec(next, context, is_part2, depth + 1),
                     );
                 }
             }
-            for neighbor in self.graph.neighbors(my_node) {
-                let name = *self.graph.node_weight(neighbor).unwrap();
-
-                let mut next = state.next();
-                next.position = name;
-                res = max(res, self.find_best_rec(next, context, is_part2))
+            for item in context.useful_valves.clone() {
+                if item == state.position {
+                    continue;
+                }
+                if !state.can_open(&item) {
+                    continue;
+                }
+                let distance = context.distances[&(state.position, item)];
+                if distance <= state.remaining {
+                    let mut next = state.clone();
+                    next.position = item;
+                    next.remaining = next.remaining - distance;
+                    res = max(res, self.find_best_rec(next, context, is_part2, depth + 1))
+                }
             }
             res
         };
@@ -188,33 +212,35 @@ impl Scene {
     }
 
     fn find_best(&self, is_part2: bool) -> u64 {
-        let useful_valves = self
+        let start = ValveName::try_from("AA").unwrap();
+        let mut useful_valves = self
             .openable_valves
             .iter()
             .filter(|(_, fr)| **fr > 0)
             .map(|s| s.0)
+            .cloned()
             .collect::<Vec<_>>();
-        let uvlen = useful_valves.len();
-        let mut context = Context::build(uvlen);
-        let state = State::initial(is_part2);
-        self.find_best_rec(state, &mut context, is_part2)
+        useful_valves.push(start);
+        let mut context = Context::build(&self.graph, useful_valves);
+        let state = State::initial(start, is_part2);
+        self.find_best_rec(state, &mut context, is_part2, 0)
     }
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 struct State {
-    open_valves: BTreeSet<ValveName>,
+    open_valves: BitSet,
     position: ValveName,
     remaining: u32,
     is_part2: bool,
 }
 
 impl State {
-    fn initial(is_part2: bool) -> Self {
+    fn initial(start: ValveName, is_part2: bool) -> Self {
         let remaining = if is_part2 { 26 } else { 30 };
         State {
-            open_valves: BTreeSet::new(),
-            position: ValveName::try_from("AA").unwrap(),
+            open_valves: BitSet::with_capacity(64),
+            position: start,
             remaining,
             is_part2,
         }
@@ -227,31 +253,45 @@ impl State {
     }
 
     fn can_open(&self, position: &ValveName) -> bool {
-        !self.open_valves.contains(position)
+        !self.open_valves.contains(position.ordinal())
     }
 
     fn open(&mut self, position: &ValveName) {
+        let position = position.ordinal();
         debug_assert!(!self.open_valves.contains(position));
-        self.open_valves.insert(*position);
+        self.open_valves.insert(position);
     }
 }
 
 #[derive(Debug)]
 struct Context {
     memo: HashMap<State, u64>,
-    useful_valves: usize,
+    useful_valves: Vec<ValveName>,
+    useful_valves_len: usize,
+    distances: BTreeMap<(ValveName, ValveName), u32>,
 }
 
 impl Context {
-    fn build(useful_valves: usize) -> Self {
+    fn build<E>(graph: &DiGraph<ValveName, E>, useful_valves: Vec<ValveName>) -> Self {
+        let fw = floyd_warshall(graph, |_| 1).unwrap();
+        let distances = fw
+            .iter()
+            .map(|(&(lhs_i, rhs_i), dist)| {
+                let lhs = *graph.node_weight(lhs_i).unwrap();
+                let rhs = *graph.node_weight(rhs_i).unwrap();
+                ((lhs, rhs), *dist as u32)
+            })
+            .collect::<BTreeMap<_, _>>();
         Self {
+            useful_valves_len: useful_valves.len(),
             useful_valves,
-            memo: HashMap::new(),
+            distances,
+            memo: HashMap::with_capacity(10000000),
         }
     }
 
     fn is_done(&self, state: &State) -> bool {
-        state.open_valves.len() == self.useful_valves
+        state.open_valves.len() == self.useful_valves_len
     }
 }
 
