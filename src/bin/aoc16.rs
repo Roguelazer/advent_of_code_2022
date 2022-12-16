@@ -1,7 +1,7 @@
+use std::cmp::max;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use clap::{Parser, ValueEnum};
-use itertools::Itertools;
 use nom::{
     bytes::complete::tag,
     character,
@@ -10,10 +10,7 @@ use nom::{
     sequence::preceded,
     IResult,
 };
-use petgraph::{
-    algo::astar::astar,
-    graph::{NodeIndex, UnGraph},
-};
+use petgraph::graph::{NodeIndex, UnGraph};
 
 #[derive(ValueEnum, Debug, PartialEq, Eq, Clone, Copy)]
 enum Mode {
@@ -30,10 +27,11 @@ struct Args {
     verbose: bool,
 }
 
-#[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
 struct ValveName([u8; 2]);
 
 impl ValveName {
+    #[allow(dead_code)]
     fn ordinal(&self) -> usize {
         (self.0[0] - b'A') as usize * 26 + (self.0[1] - b'A') as usize
     }
@@ -48,6 +46,12 @@ impl TryFrom<&str> for ValveName {
         }
         let mut cs = value.bytes();
         Ok(Self([cs.next().unwrap(), cs.next().unwrap()]))
+    }
+}
+
+impl std::fmt::Debug for ValveName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", char::from(self.0[0]), char::from(self.0[1]))
     }
 }
 
@@ -138,33 +142,52 @@ impl Scene {
         })
     }
 
-    fn find_best_rec(&self, state: State, context: &mut Context) -> Option<u64> {
+    fn find_best_rec(&self, state: State, context: &mut Context, is_part2: bool) -> u64 {
         if let Some(v) = context.memo.get(&state) {
             return *v;
         }
         let value = if state.remaining == 0 {
-            Some(state.flowed)
+            if is_part2 {
+                let mut new_state = state.clone();
+                new_state.remaining = 26;
+                new_state.position = ValveName::try_from("AA").unwrap();
+                new_state.is_part2 = false;
+                self.find_best_rec(new_state, context, false)
+            } else {
+                0
+            }
         } else if context.is_done(&state) {
-            self.find_best_rec(state.next(), context)
+            0
         } else {
-            let current_node = self.nodes[&state.position];
-            let mut options = vec![];
-            if let Some(flow_rate) = self.openable_valves.get(&state.position) {
-                if let Some(new_state) = state.open(*flow_rate) {
-                    options.push(self.find_best_rec(new_state, context)?);
+            let my_node = self.nodes[&state.position];
+
+            let mut res = 0;
+
+            if let Some(my_flow_rate) = self.openable_valves.get(&state.position) {
+                if state.can_open(&state.position) {
+                    let this_contribution = (state.remaining - 1) as u64 * my_flow_rate;
+                    let mut next = state.next();
+                    next.open(&state.position);
+                    res = max(
+                        res,
+                        this_contribution + self.find_best_rec(next, context, is_part2),
+                    );
                 }
             }
-            for neighbor in self.graph.neighbors(current_node) {
-                let neighbor_name = self.graph.node_weight(neighbor).unwrap();
-                options.push(self.find_best_rec(state.travel_to(*neighbor_name), context)?);
+            for neighbor in self.graph.neighbors(my_node) {
+                let name = *self.graph.node_weight(neighbor).unwrap();
+
+                let mut next = state.next();
+                next.position = name;
+                res = max(res, self.find_best_rec(next, context, is_part2))
             }
-            options.into_iter().max()
+            res
         };
         context.memo.insert(state, value);
         value
     }
 
-    fn find_best(&self) -> Option<u64> {
+    fn find_best(&self, is_part2: bool) -> u64 {
         let useful_valves = self
             .openable_valves
             .iter()
@@ -172,98 +195,56 @@ impl Scene {
             .map(|s| s.0)
             .collect::<Vec<_>>();
         let uvlen = useful_valves.len();
-        let mut context = Context::build(
-            &self.graph,
-            self.nodes.iter().permutations(2).map(|v| {
-                let (v01, v02) = v[0];
-                let (v11, v12) = v[1];
-                ((*v01, *v02), (*v11, *v12))
-            }),
-            uvlen,
-        );
-        let state = State::initial();
-        self.find_best_rec(state, &mut context)
+        let mut context = Context::build(uvlen);
+        let state = State::initial(is_part2);
+        self.find_best_rec(state, &mut context, is_part2)
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
 struct State {
-    open_valves: BTreeSet<usize>,
+    open_valves: BTreeSet<ValveName>,
     position: ValveName,
     remaining: u32,
-    flow_rate: u64,
-    flowed: u64,
+    is_part2: bool,
 }
 
 impl State {
-    fn initial() -> Self {
+    fn initial(is_part2: bool) -> Self {
+        let remaining = if is_part2 { 26 } else { 30 };
         State {
             open_valves: BTreeSet::new(),
             position: ValveName::try_from("AA").unwrap(),
-            remaining: 30,
-            flow_rate: 0,
-            flowed: 0,
+            remaining,
+            is_part2,
         }
     }
 
     fn next(&self) -> Self {
-        State {
-            open_valves: self.open_valves.clone(),
-            position: self.position,
-            remaining: self.remaining - 1,
-            flow_rate: self.flow_rate,
-            flowed: self.flowed + self.flow_rate,
-        }
+        let mut n = self.clone();
+        n.remaining -= 1;
+        n
     }
 
-    fn travel_to(&self, position: ValveName) -> Self {
-        let mut s = self.next();
-        s.position = position;
-        s
+    fn can_open(&self, position: &ValveName) -> bool {
+        !self.open_valves.contains(position)
     }
 
-    fn open(&self, rate: u64) -> Option<Self> {
-        if self.open_valves.contains(&self.position.ordinal()) {
-            None
-        } else {
-            let mut new_open_valves = self.open_valves.clone();
-            new_open_valves.insert(self.position.ordinal());
-            Some(State {
-                open_valves: new_open_valves,
-                position: self.position,
-                remaining: self.remaining - 1,
-                flow_rate: self.flow_rate + rate,
-                flowed: self.flowed + self.flow_rate,
-            })
-        }
+    fn open(&mut self, position: &ValveName) {
+        debug_assert!(!self.open_valves.contains(position));
+        self.open_valves.insert(*position);
     }
 }
 
 #[derive(Debug)]
 struct Context {
-    paths_by_node: BTreeMap<(NodeIndex, NodeIndex), Vec<NodeIndex>>,
-    paths_by_name: BTreeMap<(ValveName, ValveName), Vec<NodeIndex>>,
-    memo: HashMap<State, Option<u64>>,
+    memo: HashMap<State, u64>,
     useful_valves: usize,
 }
 
 impl Context {
-    fn build<I>(g: &UnGraph<ValveName, f32>, i: I, useful_valves: usize) -> Self
-    where
-        I: Iterator<Item = ((ValveName, NodeIndex), (ValveName, NodeIndex))>,
-    {
-        // precompute all the paths; floyd-warshall can do this, but not in petgraph so just use A*
-        let mut paths_by_node = BTreeMap::new();
-        let mut paths_by_name = BTreeMap::new();
-        for ((first_name, first_node), (second_name, second_node)) in i {
-            let (_, mut path) = astar(g, first_node, |n| n == second_node, |_| 1, |_| 0).unwrap();
-            path.remove(0);
-            paths_by_node.insert((first_node, second_node), path.clone());
-            paths_by_name.insert((first_name, second_name), path);
-        }
+    fn build(useful_valves: usize) -> Self {
         Self {
-            paths_by_node,
-            paths_by_name,
             useful_valves,
             memo: HashMap::new(),
         }
@@ -289,8 +270,7 @@ fn main() -> anyhow::Result<()> {
     let stdin = std::io::stdin();
     let input = std::io::read_to_string(stdin)?;
     let scene = Scene::parse(&input)?;
-    println!("{:?}", scene);
-    let best = scene.find_best();
+    let best = scene.find_best(args.mode == Mode::Part2);
     println!("{:?}", best);
     Ok(())
 }
