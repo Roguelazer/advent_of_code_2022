@@ -1,24 +1,23 @@
 use std::cmp::min;
+use std::collections::HashMap;
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use itertools::{EitherOrBoth, Itertools};
 
 const WIDTH: usize = 7;
 const TALLEST_SHAPE: usize = 4;
 
-#[derive(ValueEnum, Debug, PartialEq, Eq, Clone, Copy)]
-enum Mode {
-    Part1,
-    Part2,
-}
-
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[clap(short, long, value_enum)]
-    mode: Mode,
+    #[clap(short, long, value_parser)]
+    stop_after: usize,
     #[clap(short, long)]
     verbose: bool,
+    #[clap(short, long)]
+    print_raw: bool,
+    #[clap(short, long)]
+    estimate_cycles: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,10 +36,26 @@ impl Cell {
         }
     }
 
+    fn as_bits(&self) -> u16 {
+        match self {
+            Cell::Empty => 0b01,
+            Cell::Stuck => 0b10,
+            Cell::Moving => 0b11,
+        }
+    }
+
     fn frozen(&self) -> Self {
         match self {
             Self::Moving => Self::Stuck,
             other => *other,
+        }
+    }
+
+    fn can_move_into(&self) -> bool {
+        match self {
+            Self::Moving => true,
+            Self::Empty => true,
+            Self::Stuck => false,
         }
     }
 }
@@ -171,9 +186,7 @@ impl Scene {
                 .iter()
                 .zip_longest(row.iter().skip(1))
                 .all(|items| match items {
-                    EitherOrBoth::Both(Cell::Moving, Cell::Empty) => true,
-                    EitherOrBoth::Both(Cell::Moving, Cell::Moving) => true,
-                    EitherOrBoth::Both(Cell::Moving, _) => false,
+                    EitherOrBoth::Both(Cell::Moving, c) => c.can_move_into(),
                     EitherOrBoth::Left(Cell::Moving) => false,
                     _ => true,
                 }),
@@ -182,9 +195,7 @@ impl Scene {
                 .rev()
                 .zip_longest(row.iter().rev().skip(1))
                 .all(|items| match items {
-                    EitherOrBoth::Both(Cell::Moving, Cell::Empty) => true,
-                    EitherOrBoth::Both(Cell::Moving, Cell::Moving) => true,
-                    EitherOrBoth::Both(Cell::Moving, _) => false,
+                    EitherOrBoth::Both(Cell::Moving, c) => c.can_move_into(),
                     EitherOrBoth::Left(Cell::Moving) => false,
                     _ => true,
                 }),
@@ -195,17 +206,19 @@ impl Scene {
 
     fn can_move_down(&self, index: usize) -> bool {
         if index >= self.rows.len() {
-            return true;
+            true
+        } else if index == 0 {
+            false
+        } else {
+            (0..WIDTH).all(|x| {
+                if self.rows[index][x] == Cell::Moving {
+                    let below = self.rows[index - 1][x];
+                    index > 0 && below.can_move_into()
+                } else {
+                    true
+                }
+            })
         }
-        (0..WIDTH).all(|x| {
-            if self.rows[index][x] == Cell::Moving {
-                index > 0
-                    && (self.rows[index - 1][x] == Cell::Empty
-                        || self.rows[index - 1][x] == Cell::Moving)
-            } else {
-                true
-            }
-        })
     }
 
     fn can_move(&self, motion: Motion, bottom_row: usize) -> bool {
@@ -217,6 +230,8 @@ impl Scene {
         }
     }
 
+    /// Move a shape in the given direction whose bottom edge is at `bottom_row`
+    /// Will panic if you didn't verify safety with `can_move` first.
     fn do_move(&mut self, motion: Motion, bottom_row: usize) {
         for index in bottom_row..(bottom_row + TALLEST_SHAPE) {
             if index >= self.rows.len() {
@@ -231,6 +246,7 @@ impl Scene {
         }
     }
 
+    /// Freeze a shape in motion whose bottom edge is at `bottom_row`
     fn freeze(&mut self, bottom_row: usize) {
         for index in bottom_row..min(bottom_row + TALLEST_SHAPE, self.rows.len() - 1) {
             self.rows[index] = self.rows[index].map(|c| c.frozen());
@@ -247,11 +263,13 @@ impl Scene {
         max + 1
     }
 
+    /// Remove empty whitespace from the top of the graph to make inserting new cells easier
     fn trim(&mut self) {
         self.rows.truncate(self.find_highest_occupied_row());
     }
 
-    fn tick(&mut self) {
+    /// Run one iteration. Return a boolean indicating whether or not you did anything.
+    fn tick(&mut self) -> bool {
         if let Some(bottom_row) = self.shape_bottom_row {
             let motion = match self.next_tick {
                 Tick::Lr => {
@@ -273,8 +291,10 @@ impl Scene {
             } else {
             }
             self.next_tick = self.next_tick.next();
+            false
         } else {
             self.add_shape();
+            true
         }
     }
 
@@ -290,12 +310,15 @@ impl Scene {
 
     fn check_drop_bottom(&mut self) {
         if let Some(idx) = self.find_last_full_row() {
-            let mut new_rows = self.rows.drain(idx..).collect::<Vec<_>>();
-            std::mem::swap(&mut self.rows, &mut new_rows);
-            if let Some(shape_bottom_row) = self.shape_bottom_row {
-                self.shape_bottom_row = Some(shape_bottom_row - idx);
+            if idx > 0 {
+                let mut new_rows = self.rows.drain(idx..).collect::<Vec<_>>();
+                std::mem::swap(&mut self.rows, &mut new_rows);
+                if let Some(shape_bottom_row) = self.shape_bottom_row {
+                    self.shape_bottom_row = Some(shape_bottom_row - idx);
+                }
+                self.floor_offset += idx;
+                log::debug!("dropping up to {}", idx);
             }
-            self.floor_offset += idx;
         }
     }
 
@@ -306,6 +329,36 @@ impl Scene {
         println!("-------");
         println!("and then another {} rows", self.floor_offset);
     }
+}
+
+// each row can be encoded into 14 bits, but we'll just take the full 16
+#[derive(Debug)]
+#[repr(transparent)]
+struct CompactRow {
+    inner: u16,
+}
+
+impl CompactRow {
+    fn from_row(row: &[Cell; WIDTH]) -> Self {
+        Self {
+            inner: row[0].as_bits() << 12
+                | row[1].as_bits() << 10
+                | row[2].as_bits() << 8
+                | row[3].as_bits() << 6
+                | row[4].as_bits() << 4
+                | row[5].as_bits() << 2
+                | row[6].as_bits(),
+        }
+    }
+}
+
+const ROW_SIG: usize = 40;
+
+#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct CycleKey {
+    next_shape: usize,
+    next_motion: usize,
+    rows: [u16; ROW_SIG],
 }
 
 fn main() -> anyhow::Result<()> {
@@ -333,10 +386,65 @@ fn main() -> anyhow::Result<()> {
         .collect::<anyhow::Result<Vec<Motion>>>()?;
     let mut scene = Scene::new(motions);
     let mut ticks = 0;
-    while scene.shapes_added < 2023 {
-        scene.tick();
+    let mut cycles = HashMap::new();
+    let mut found_cycles = Vec::new();
+    let mut known_cycle = None;
+    while scene.shapes_added < args.stop_after {
+        if scene.tick() {
+            let height = scene.find_highest_occupied_row() + scene.floor_offset;
+            if args.print_raw {
+                println!("{}\t{}", scene.shapes_added, height);
+            }
+            if args.estimate_cycles && known_cycle.is_none() && scene.rows.len() >= ROW_SIG {
+                let mut rows = [0u16; ROW_SIG];
+                for (i, r) in scene
+                    .rows
+                    .iter()
+                    .rev()
+                    .take(20)
+                    .map(|r| CompactRow::from_row(r))
+                    .enumerate()
+                {
+                    rows[i] = r.inner;
+                }
+                let state = CycleKey {
+                    next_shape: scene.next_shape,
+                    next_motion: scene.next_motion,
+                    rows,
+                };
+                if let Some((last_sa, last_height)) = cycles.get(&state) {
+                    log::debug!(
+                        "repeat at {}..{} = {} height = {}",
+                        last_sa,
+                        scene.shapes_added,
+                        scene.shapes_added - last_sa,
+                        height - last_height
+                    );
+                    found_cycles.push((scene.shapes_added - last_sa, height - last_height))
+                }
+                cycles.insert(state, (scene.shapes_added, height));
+
+                if found_cycles.len() > 10
+                    && found_cycles
+                        .iter()
+                        .rev()
+                        .take(4)
+                        .tuple_windows()
+                        .all(|(l, r)| l == r)
+                {
+                    let (shape_length, height_length) = found_cycles.last().unwrap();
+
+                    let remaining = args.stop_after - scene.shapes_added;
+                    let num_periods_to_skip = remaining / shape_length;
+                    log::info!("skipping {:?} periods", num_periods_to_skip);
+                    scene.shapes_added += num_periods_to_skip * shape_length;
+                    scene.floor_offset += num_periods_to_skip * height_length;
+                    known_cycle = Some(true)
+                }
+            }
+        }
         ticks += 1;
-        if ticks % 100 == 0 {
+        if ticks % 1000 == 0 {
             scene.check_drop_bottom();
         }
     }
