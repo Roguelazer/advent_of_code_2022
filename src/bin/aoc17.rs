@@ -389,7 +389,8 @@ fn main() -> anyhow::Result<()> {
     let mut cycles = HashMap::new();
     let mut found_cycles = Vec::new();
     let mut known_cycle = None;
-    while scene.shapes_added < args.stop_after {
+    let start = std::time::Instant::now();
+    while scene.shapes_added <= args.stop_after {
         if scene.tick() {
             let height = scene.find_highest_occupied_row() + scene.floor_offset;
             if args.print_raw {
@@ -451,6 +452,10 @@ fn main() -> anyhow::Result<()> {
     if args.verbose {
         scene.draw();
     }
-    println!("{}", scene.find_highest_occupied_row() + scene.floor_offset);
+    println!(
+        "{} (in {:?})",
+        scene.find_highest_occupied_row() + scene.floor_offset,
+        start.elapsed()
+    );
     Ok(())
 }
