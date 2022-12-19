@@ -8,7 +8,6 @@ use nom::{
     IResult,
 };
 use rayon::prelude::*;
-use std::collections::VecDeque;
 
 #[derive(ValueEnum, Debug, PartialEq, Eq, Clone, Copy)]
 enum Mode {
@@ -52,14 +51,14 @@ impl Blueprint {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Ord, PartialOrd)]
 struct Inventory {
-    ore: u16,
-    clay: u16,
     obsidian: u16,
-    ore_robots: u16,
-    clay_robots: u16,
+    clay: u16,
     obsidian_robots: u16,
+    clay_robots: u16,
+    ore: u16,
+    ore_robots: u16,
 }
 
 impl Inventory {
@@ -132,58 +131,69 @@ fn parse_blueprints(s: &str) -> anyhow::Result<Vec<Blueprint>> {
 }
 
 fn simulate_with(blueprint: &Blueprint, inventory: Inventory, ticks: u16) -> u16 {
-    let mut work = VecDeque::new();
+    let mut work = Vec::new();
+    let mut next_work = Vec::new();
     let mut seen = LruCache::new(1000000);
     let mut best = 0;
-    work.push_back((0, inventory, ticks));
-    while let Some((geodes, inventory, remaining_ticks)) = work.pop_front() {
-        best = std::cmp::max(best, geodes);
-        if remaining_ticks <= 1 {
-            continue;
-        }
-        if seen
-            .insert((geodes, inventory.clone(), remaining_ticks), ())
-            .is_some()
-        {
-            continue;
-        }
-        if inventory.ore >= blueprint.geode_cost.0 && inventory.obsidian >= blueprint.geode_cost.1 {
-            // greedy, probably unsafe optimization: always buy a geode robot
-            // you could probably construct a parameter set where this fails but what
-            // are the odds that AoC did that?
-            let mut next = inventory.next();
-            next.ore -= blueprint.geode_cost.0;
-            next.obsidian -= blueprint.geode_cost.1;
-            let these_geodes = remaining_ticks - 1;
-            work.push_back((geodes + these_geodes, next, remaining_ticks - 1));
-        } else {
-            if inventory.ore >= blueprint.obsidian_cost.0
-                && inventory.clay >= blueprint.obsidian_cost.1
-                && inventory.obsidian_robots < blueprint.max_obsidian_use()
-            {
-                let mut next = inventory.next();
-                next.ore -= blueprint.obsidian_cost.0;
-                next.clay -= blueprint.obsidian_cost.1;
-                next.obsidian_robots += 1;
-                work.push_back((geodes, next, remaining_ticks - 1))
+    let mut done = false;
+    work.push((0, inventory, ticks));
+    while !done {
+        while let Some((geodes, inventory, remaining_ticks)) = work.pop() {
+            best = std::cmp::max(best, geodes);
+            if remaining_ticks <= 1 {
+                done = true
             }
-            if inventory.ore >= blueprint.ore_cost && inventory.ore_robots < blueprint.max_ore_use()
+            if seen
+                .insert((geodes, inventory.clone(), remaining_ticks), ())
+                .is_some()
             {
-                let mut next = inventory.next();
-                next.ore -= blueprint.ore_cost;
-                next.ore_robots += 1;
-                work.push_back((geodes, next, remaining_ticks - 1))
+                continue;
             }
-            if inventory.ore >= blueprint.clay_cost
-                && inventory.clay_robots < blueprint.max_clay_use()
+            if inventory.ore >= blueprint.geode_cost.0
+                && inventory.obsidian >= blueprint.geode_cost.1
             {
+                // greedy, probably unsafe optimization: always buy a geode robot if you can
+                // you could probably construct a parameter set where this fails but what
+                // are the odds that AoC did that?
                 let mut next = inventory.next();
-                next.ore -= blueprint.clay_cost;
-                next.clay_robots += 1;
-                work.push_back((geodes, next, remaining_ticks - 1))
+                next.ore -= blueprint.geode_cost.0;
+                next.obsidian -= blueprint.geode_cost.1;
+                let these_geodes = remaining_ticks - 1;
+                next_work.push((geodes + these_geodes, next, remaining_ticks - 1));
+            } else {
+                if inventory.ore >= blueprint.obsidian_cost.0
+                    && inventory.clay >= blueprint.obsidian_cost.1
+                    && inventory.obsidian_robots < blueprint.max_obsidian_use()
+                {
+                    let mut next = inventory.next();
+                    next.ore -= blueprint.obsidian_cost.0;
+                    next.clay -= blueprint.obsidian_cost.1;
+                    next.obsidian_robots += 1;
+                    next_work.push((geodes, next, remaining_ticks - 1))
+                }
+                if inventory.ore >= blueprint.ore_cost
+                    && inventory.ore_robots < blueprint.max_ore_use()
+                {
+                    let mut next = inventory.next();
+                    next.ore -= blueprint.ore_cost;
+                    next.ore_robots += 1;
+                    next_work.push((geodes, next, remaining_ticks - 1))
+                }
+                if inventory.ore >= blueprint.clay_cost
+                    && inventory.clay_robots < blueprint.max_clay_use()
+                {
+                    let mut next = inventory.next();
+                    next.ore -= blueprint.clay_cost;
+                    next.clay_robots += 1;
+                    next_work.push((geodes, next, remaining_ticks - 1))
+                }
+                next_work.push((geodes, inventory.next(), remaining_ticks - 1));
             }
-            work.push_back((geodes, inventory.next(), remaining_ticks - 1));
         }
+        // this trick is borred from vwoo; only consider the most successful fronts from this BFS
+        next_work.sort_by(|a, b| b.cmp(a));
+        next_work.truncate(std::cmp::min(next_work.len(), 10000));
+        std::mem::swap(&mut work, &mut next_work);
     }
     best
 }
