@@ -73,9 +73,9 @@ impl<V: Debug + Default + Clone + Copy> Grid<V> {
         let depth = max(b2.z, b1.z) + 1;
         Self {
             cells: vec![V::default(); width as usize * height as usize * depth as usize],
-            width: width as i32,
-            height: height as i32,
-            depth: depth as i32,
+            width,
+            height,
+            depth,
         }
     }
 
@@ -202,8 +202,7 @@ fn main() -> anyhow::Result<()> {
             let coord = grid
                 .iter()
                 .find(|(_, c)| **c == Cell::Unknown)
-                .map(|(v, _)| v)
-                .clone();
+                .map(|(v, _)| v);
             if let Some(coord) = coord {
                 let (cells, state) = flood_fill(&grid, coord);
                 for cell in cells {

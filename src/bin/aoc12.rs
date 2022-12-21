@@ -61,7 +61,7 @@ impl FromStr for Grid {
         let mut end_coordinate = None;
         let cells = s
             .split('\n')
-            .filter(|r| r.len() > 0)
+            .filter(|r| !r.is_empty())
             .enumerate()
             .map(|(y, row)| {
                 row.as_bytes()
@@ -77,7 +77,7 @@ impl FromStr for Grid {
                                 end_coordinate = Some((x, y));
                                 25
                             }
-                            other if *other >= b'a' && *other <= b'z' => (*other - b'a') as u8,
+                            other if *other >= b'a' && *other <= b'z' => *other - b'a',
                             other => {
                                 anyhow::bail!("invalid char {}", other);
                             }

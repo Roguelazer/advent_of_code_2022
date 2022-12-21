@@ -45,12 +45,12 @@ impl Scene {
                             let visible_to_right = row.iter().skip(x + 1).all(|i| *i < *cell);
                             let visible_above = self.cols[x].iter().take(y).all(|i| *i < *cell);
                             let visible_below = self.cols[x].iter().skip(y + 1).all(|i| *i < *cell);
-                            if visible_to_left || visible_to_right || visible_above || visible_below
-                            {
-                                1
-                            } else {
-                                0
-                            }
+                            usize::from(
+                                visible_to_left
+                                    || visible_to_right
+                                    || visible_above
+                                    || visible_below,
+                            )
                         }
                     })
                     .sum::<usize>()
@@ -71,8 +71,7 @@ impl Scene {
                         let down_score = scenic_score_helper(col.iter().skip(y + 1), *cell);
                         let left_score = scenic_score_helper(row.iter().take(x).rev(), *cell);
                         let right_score = scenic_score_helper(row.iter().skip(x + 1), *cell);
-                        let combined = left_score * right_score * up_score * down_score;
-                        combined
+                        left_score * right_score * up_score * down_score
                     })
                     .max()
             })

@@ -162,31 +162,28 @@ fn render<W: std::io::Write>(
     let (width, height) = crossterm::terminal::size()
         .map(|(w, h)| (w as i32, h as i32))
         .unwrap_or((80, 40));
-    let (min_x, max_x, min_y, max_y) = (
-        -1 * width / 2 + 1,
-        width / 2,
-        -1 * height / 2 + 1,
-        height / 2 - 1,
-    );
+    let (min_x, max_x, min_y, max_y) = (-width / 2 + 1, width / 2, -height / 2 + 1, height / 2 - 1);
     execute!(out, MoveTo(0, 0))?;
     (min_y..=max_y).for_each(|y| {
-        (min_x..=max_x).for_each(|x| {
-            let coord = Coordinate { x, y };
-            if let Some(k) = knots.iter().find(|k| k.position == coord) {
-                print!("{}", k.label);
-            } else if trails
-                && knots
-                    .iter()
-                    .last()
-                    .map(|k| k.visited_positions.contains(&coord))
-                    .unwrap_or(false)
-            {
-                print!("#");
-            } else {
-                print!(" ");
-            }
-        });
-        print!("\n");
+        let line = (min_x..=max_x)
+            .map(|x| {
+                let coord = Coordinate { x, y };
+                if let Some(k) = knots.iter().find(|k| k.position == coord) {
+                    k.label
+                } else if trails
+                    && knots
+                        .iter()
+                        .last()
+                        .map(|k| k.visited_positions.contains(&coord))
+                        .unwrap_or(false)
+                {
+                    '#'
+                } else {
+                    ' '
+                }
+            })
+            .collect::<String>();
+        println!("{}", line);
     });
     execute!(out, MoveTo(0, height as u16))?;
     print!(" [ frame {:<10} (command {:<10}) ]", frame, command + 1);
@@ -198,7 +195,7 @@ fn main() -> anyhow::Result<()> {
     let stdin_r = std::io::stdin();
     let stdin = stdin_r.lock();
     let num_knots = args.num_knots;
-    let mut knots = (0..num_knots).map(|i| Knot::new(i)).collect::<Vec<Knot>>();
+    let mut knots = (0..num_knots).map(Knot::new).collect::<Vec<Knot>>();
     let stdout_r = std::io::stdout();
     let mut stdout = stdout_r.lock();
 

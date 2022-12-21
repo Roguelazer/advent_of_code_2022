@@ -96,13 +96,11 @@ impl Scene {
             } else {
                 self.grid[coordinate] = Cell::Sand;
             }
+        } else if self.grid[Point { x: 500, y: 0 }].is_empty() {
+            self.sand_created += 1;
+            self.current_sand = Some(Point { x: 500, y: 0 });
         } else {
-            if self.grid[Point { x: 500, y: 0 }].is_empty() {
-                self.sand_created += 1;
-                self.current_sand = Some(Point { x: 500, y: 0 });
-            } else {
-                return false;
-            }
+            return false;
         }
         true
     }
@@ -130,7 +128,7 @@ fn parse_scene(s: &str, mode: Mode) -> anyhow::Result<Scene> {
         .map(|(i, line)| {
             let (remaining, path) = parse_path(line)
                 .map_err(|e| anyhow::anyhow!("error parsing line {}: {:?}", i + 1, e))?;
-            if remaining.len() > 0 {
+            if !remaining.trim().is_empty() {
                 anyhow::bail!("unhandled input in line {}: {:?}", i + 1, remaining);
             }
             Ok(path)

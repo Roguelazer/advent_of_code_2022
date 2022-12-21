@@ -43,7 +43,7 @@ impl TryFrom<&str> for ValveName {
     type Error = anyhow::Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        if value.bytes().count() != 2 {
+        if value.len() != 2 {
             anyhow::bail!("invalid valve name");
         }
         let mut cs = value.bytes();
@@ -97,7 +97,7 @@ impl Line {
                     flow_rate,
                     neighbors: neighbors
                         .into_iter()
-                        .map(|n| ValveName::try_from(n))
+                        .map(ValveName::try_from)
                         .collect::<anyhow::Result<Vec<ValveName>>>()?,
                 })
             },
@@ -152,7 +152,7 @@ impl Scene {
         is_part2: bool,
         depth: usize,
     ) -> u64 {
-        let prefix = std::iter::repeat(" ").take(depth).collect::<String>();
+        let prefix = " ".repeat(depth);
         log::debug!(
             "{0} at {1} [t={2}, d={3}]",
             prefix,
@@ -201,7 +201,7 @@ impl Scene {
                 if distance <= state.remaining {
                     let mut next = state.clone();
                     next.position = item;
-                    next.remaining = next.remaining - distance;
+                    next.remaining -= distance;
                     res = max(res, self.find_best_rec(next, context, is_part2, depth + 1))
                 }
             }

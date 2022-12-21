@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt;
 
 pub trait DimVal:
@@ -37,14 +38,13 @@ impl<I: DimVal> Point<I> {
     }
 
     pub fn line_to(&self, other: Point<I>) -> impl Iterator<Item = Point<I>> {
-        LineToIter::new(self.clone(), other)
+        LineToIter::new(*self, other)
     }
 
     pub fn manhattan_distance_to(&self, other: Point<I>) -> usize {
-        let val = ((self.x - other.x).abs() + (self.y - other.y).abs())
+        ((self.x - other.x).abs() + (self.y - other.y).abs())
             .to_u64()
-            .unwrap() as usize;
-        val
+            .unwrap() as usize
     }
 }
 
@@ -78,25 +78,19 @@ impl<I: DimVal> LineToIter<I> {
         debug_assert!(start.x == end.x || start.y == end.y);
         let zero = I::zero();
         let one = I::one();
-        let neg_one = one.clone().neg();
-        let dir = if start.x == end.x {
-            if start.y < end.y {
-                Point { x: zero, y: one }
-            } else {
-                Point {
-                    x: zero,
-                    y: neg_one,
-                }
-            }
-        } else {
-            if start.x < end.x {
-                Point { x: one, y: zero }
-            } else {
-                Point {
-                    x: neg_one,
-                    y: zero,
-                }
-            }
+        let neg_one = one.neg();
+        let dir = match (start.x.cmp(&end.x), start.y.cmp(&end.y)) {
+            (Ordering::Less, _) => Point { x: one, y: zero },
+            (Ordering::Greater, _) => Point {
+                x: neg_one,
+                y: zero,
+            },
+            (Ordering::Equal, Ordering::Less) => Point { x: zero, y: one },
+            (Ordering::Equal, Ordering::Greater) => Point {
+                x: zero,
+                y: neg_one,
+            },
+            (Ordering::Equal, Ordering::Equal) => unreachable!(),
         };
         Self {
             start,

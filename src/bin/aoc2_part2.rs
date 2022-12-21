@@ -103,11 +103,11 @@ fn main() {
         .filter_map(|l| l.ok())
         .filter_map(|line| {
             let line = line.trim();
-            if line.len() == 0 {
+            if line.is_empty() {
                 return None;
             }
             let mut chars = line.chars();
-            let they_play = Rps::from_they_play(chars.nth(0).unwrap());
+            let they_play = Rps::from_they_play(chars.next().unwrap());
             let you_should = Outcome::from_you_should(chars.nth(1).unwrap());
             let score = score_round(they_play, you_should);
             Some(score)

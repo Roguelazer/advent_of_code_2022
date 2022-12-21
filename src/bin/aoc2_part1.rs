@@ -85,11 +85,11 @@ fn main() {
         .filter_map(|l| l.ok())
         .filter_map(|line| {
             let line = line.trim();
-            if line.len() == 0 {
+            if line.is_empty() {
                 return None;
             }
             let mut chars = line.chars();
-            let they_play = Rps::from_they_play(chars.nth(0).unwrap());
+            let they_play = Rps::from_they_play(chars.next().unwrap());
             let you_play = Rps::from_you_play(chars.nth(1).unwrap());
             let score = score_round(you_play, they_play);
             Some(score)

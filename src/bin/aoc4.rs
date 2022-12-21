@@ -30,10 +30,8 @@ impl Assignment {
     fn overlaps(&self, other: &Self) -> bool {
         if self.0.contains(other.0.start()) || self.0.contains(other.0.end()) {
             true
-        } else if other.0.start() <= self.0.start() && other.0.end() >= self.0.start() {
-            true
         } else {
-            false
+            other.0.start() <= self.0.start() && other.0.end() >= self.0.start()
         }
     }
 }

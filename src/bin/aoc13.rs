@@ -27,7 +27,7 @@ struct Args {
     verbose: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Packet {
     Number(i32),
     List(Vec<Packet>),
@@ -70,9 +70,15 @@ impl PartialOrd for Packet {
                 }
                 Some(Ordering::Equal)
             }
-            (lhs, rhs @ Packet::List(_)) => Packet::List(vec![lhs.clone()]).partial_cmp(&rhs),
+            (lhs, rhs @ Packet::List(_)) => Packet::List(vec![lhs.clone()]).partial_cmp(rhs),
             (lhs @ Packet::List(_), rhs) => lhs.partial_cmp(&Packet::List(vec![rhs.clone()])),
         }
+    }
+}
+
+impl Ord for Packet {
+    fn cmp(&self, other: &Packet) -> Ordering {
+        self.partial_cmp(other).unwrap()
     }
 }
 

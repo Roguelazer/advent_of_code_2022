@@ -51,15 +51,15 @@ impl Scene {
                 let num_crates = parts
                     .nth(1)
                     .ok_or_else(|| anyhow::anyhow!("invalid move line {}", line))
-                    .and_then(|p| p.parse().map_err(|e| anyhow::Error::new(e)))?;
+                    .and_then(|p| p.parse().map_err(anyhow::Error::new))?;
                 let source_stack = parts
                     .nth(1)
                     .ok_or_else(|| anyhow::anyhow!("invalid move line {}", line))
-                    .and_then(|p| p.parse::<usize>().map_err(|e| anyhow::Error::new(e)))?;
+                    .and_then(|p| p.parse::<usize>().map_err(anyhow::Error::new))?;
                 let dest_stack = parts
                     .nth(1)
                     .ok_or_else(|| anyhow::anyhow!("invalid move line {}", line))
-                    .and_then(|p| p.parse::<usize>().map_err(|e| anyhow::Error::new(e)))?;
+                    .and_then(|p| p.parse::<usize>().map_err(anyhow::Error::new))?;
                 commands.push(Command {
                     num_crates,
                     source_stack,

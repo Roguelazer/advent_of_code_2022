@@ -159,15 +159,13 @@ impl Evaluator {
         let mut nodes: BTreeMap<String, _> = BTreeMap::new();
         let mut graph: DiGraph<String, ()> = DiGraph::new();
         for (key, job) in jobs.iter() {
-            let outer_node = nodes
+            let outer_node = *nodes
                 .entry(key.clone())
-                .or_insert_with(|| graph.add_node(key.to_owned()))
-                .clone();
+                .or_insert_with(|| graph.add_node(key.to_owned()));
             for dependency in job.dependencies().into_iter() {
-                let inner_node = nodes
+                let inner_node = *nodes
                     .entry(dependency.to_string())
-                    .or_insert_with(|| graph.add_node(dependency.to_owned()))
-                    .clone();
+                    .or_insert_with(|| graph.add_node(dependency.to_owned()));
                 graph.add_edge(outer_node, inner_node, ());
             }
         }

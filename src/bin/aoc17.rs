@@ -403,7 +403,7 @@ fn main() -> anyhow::Result<()> {
                     .iter()
                     .rev()
                     .take(20)
-                    .map(|r| CompactRow::from_row(r))
+                    .map(CompactRow::from_row)
                     .enumerate()
                 {
                     rows[i] = r.inner;
