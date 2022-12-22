@@ -156,7 +156,11 @@ fn parse_instructions(s: &str) -> IResult<&str, Vec<Instruction>> {
     )))(s)
 }
 
-fn step(mut position: Point, direction: Direction, grid: &DenseGrid<Cell>) -> (Point, Cell) {
+fn step_part1(
+    mut position: Point,
+    direction: Direction,
+    grid: &DenseGrid<Cell>,
+) -> (Point, Direction, Cell) {
     loop {
         let increment = match direction {
             Direction::Right => Point::new(1, 0),
@@ -176,13 +180,259 @@ fn step(mut position: Point, direction: Direction, grid: &DenseGrid<Cell>) -> (P
         }
         match grid.get(position) {
             Some(Cell::Missing) => continue,
-            Some(other) => return (position, other),
+            Some(other) => return (position, direction, other),
             None => unreachable!(),
         }
     }
 }
 
-fn simulate(board: &mut Board) -> u32 {
+fn get_face(position: Point, face_size: usize) -> u8 {
+    if face_size == 4 {
+        if position.y < 5 {
+            1
+        } else if position.y < 9 && position.x < 5 {
+            2
+        } else if position.y < 9 && position.x < 9 {
+            3
+        } else if position.y < 9 && position.x < 13 {
+            4
+        } else if position.y > 8 && position.y < 13 && position.x > 8 && position.x < 13 {
+            5
+        } else if position.y > 8 && position.y < 13 && position.x > 12 && position.x < 17 {
+            6
+        } else {
+            unreachable!()
+        }
+    } else if face_size == 50 {
+        if position.x < 101 && position.y < 51 {
+            1
+        } else if position.y < 51 {
+            2
+        } else if position.y > 50 && position.y < 101 {
+            3
+        } else if position.y < 151 && position.x < 51 {
+            4
+        } else if position.y < 151 && position.x < 101 {
+            5
+        } else if position.y < 201 && position.x < 51 {
+            6
+        } else {
+            unreachable!();
+        }
+    } else {
+        panic!("unhandled face size {:?}", 50)
+    }
+}
+
+fn step_part2(
+    position: Point,
+    direction: Direction,
+    grid: &DenseGrid<Cell>,
+    face_size: usize,
+) -> (Point, Direction, Cell) {
+    let increment = match direction {
+        Direction::Right => Point::new(1, 0),
+        Direction::Left => Point::new(-1, 0),
+        Direction::Up => Point::new(0, -1),
+        Direction::Down => Point::new(0, 1),
+    };
+    let next_position = position + increment;
+    match grid.get(next_position) {
+        Some(Cell::Missing) => {}
+        Some(other) => return (next_position, direction, other),
+        _ => {}
+    };
+    let face = get_face(position, face_size);
+    log::debug!("wraparound at {} ({})", position, face);
+    let adjacencies = if face_size == 4 {
+        vec![
+            (
+                Direction::Left,
+                1,
+                Point::new(position.y + 4, 5),
+                Direction::Down,
+            ),
+            (
+                Direction::Up,
+                1,
+                Point::new(13 - position.x, 5),
+                Direction::Down,
+            ),
+            (
+                Direction::Right,
+                1,
+                Point::new(16, 13 - position.y),
+                Direction::Left,
+            ),
+            (
+                Direction::Left,
+                2,
+                Point::new(21 - position.y, 12),
+                Direction::Up,
+            ),
+            (
+                Direction::Up,
+                2,
+                Point::new(13 - position.x, 1),
+                Direction::Down,
+            ),
+            (
+                Direction::Down,
+                2,
+                Point::new(13 - position.x, 12),
+                Direction::Down,
+            ),
+            (
+                Direction::Up,
+                3,
+                Point::new(9, position.x - 4),
+                Direction::Right,
+            ),
+            (
+                Direction::Down,
+                3,
+                Point::new(9, 17 - position.x),
+                Direction::Right,
+            ),
+            (
+                Direction::Right,
+                4,
+                Point::new(21 - position.y, 9),
+                Direction::Down,
+            ),
+            (
+                Direction::Left,
+                5,
+                Point::new(17 - position.y, 8),
+                Direction::Up,
+            ),
+            (
+                Direction::Down,
+                5,
+                Point::new(13 - position.x, 8),
+                Direction::Up,
+            ),
+            (
+                Direction::Down,
+                6,
+                Point::new(1, 21 - position.x),
+                Direction::Right,
+            ),
+            (
+                Direction::Right,
+                6,
+                Point::new(12, 13 - position.y),
+                Direction::Left,
+            ),
+            (
+                Direction::Up,
+                6,
+                Point::new(12, 21 - position.y),
+                Direction::Left,
+            ),
+        ]
+    } else if face_size == 50 {
+        vec![
+            (
+                Direction::Left,
+                1,
+                Point::new(1, 151 - position.y),
+                Direction::Right,
+            ),
+            (
+                Direction::Up,
+                1,
+                Point::new(1, position.x + 100),
+                Direction::Right,
+            ),
+            (
+                Direction::Up,
+                2,
+                Point::new(position.x - 100, 200),
+                Direction::Up,
+            ),
+            (
+                Direction::Right,
+                2,
+                Point::new(100, 151 - position.y),
+                Direction::Left,
+            ),
+            (
+                Direction::Down,
+                2,
+                Point::new(100, position.x - 50),
+                Direction::Left,
+            ),
+            (
+                Direction::Right,
+                3,
+                Point::new(position.y + 50, 50),
+                Direction::Up,
+            ),
+            (
+                Direction::Right,
+                5,
+                Point::new(150, 151 - position.y),
+                Direction::Left,
+            ),
+            (
+                Direction::Down,
+                5,
+                Point::new(50, position.x + 100),
+                Direction::Left,
+            ),
+            (
+                Direction::Right,
+                6,
+                Point::new(position.y - 100, 150),
+                Direction::Up,
+            ),
+            (
+                Direction::Down,
+                6,
+                Point::new(position.x + 100, 1),
+                Direction::Down,
+            ),
+            (
+                Direction::Left,
+                6,
+                Point::new(position.y - 100, 1),
+                Direction::Down,
+            ),
+            (
+                Direction::Left,
+                4,
+                Point::new(51, 151 - position.y),
+                Direction::Right,
+            ),
+            (
+                Direction::Up,
+                4,
+                Point::new(51, position.x + 50),
+                Direction::Right,
+            ),
+            (
+                Direction::Left,
+                3,
+                Point::new(position.y - 50, 101),
+                Direction::Down,
+            ),
+        ]
+    } else {
+        panic!("unhandled face size {}", face_size);
+    };
+    for (pdirection, pface, point, new_direction) in adjacencies {
+        if pdirection == direction && pface == face {
+            return (point, new_direction, grid.get(point).unwrap());
+        }
+    }
+    panic!(
+        "no transition found for face {} going {:?}",
+        face, direction
+    );
+}
+
+fn simulate(board: &mut Board, mode: Mode) -> u32 {
     let first_empty = (1..=board.grid.width())
         .find_map(|x| {
             let coordinate = Point::new(x as i64, 1);
@@ -193,6 +443,15 @@ fn simulate(board: &mut Board) -> u32 {
             }
         })
         .unwrap();
+    let face_size = (1..board.grid.height())
+        .map(|y| {
+            (1..board.grid.width())
+                .filter(|x| board.grid.get(Point::new(*x as i64, y as i64)) != Some(Cell::Missing))
+                .count()
+        })
+        .min()
+        .unwrap();
+    log::info!("part 2 face size is {}", face_size);
     let mut state = State {
         position: first_empty,
         direction: Direction::Right,
@@ -209,9 +468,17 @@ fn simulate(board: &mut Board) -> u32 {
                     board
                         .grid
                         .set(state.position, Cell::Traversed(state.direction));
-                    let (next, cell) = step(state.position, state.direction, &board.grid);
+                    let (next, direction, cell) = match mode {
+                        Mode::Part1 => step_part1(state.position, state.direction, &board.grid),
+                        Mode::Part2 => {
+                            step_part2(state.position, state.direction, &board.grid, face_size)
+                        }
+                    };
                     match cell {
-                        Cell::Empty | Cell::Traversed(_) => state.position = next,
+                        Cell::Empty | Cell::Traversed(_) => {
+                            state.direction = direction;
+                            state.position = next;
+                        }
                         Cell::Wall => {
                             log::debug!("hit a wall at {:?} pointed {:?}", next, state.direction);
                             break;
@@ -264,7 +531,7 @@ fn main() -> anyhow::Result<()> {
     if args.verbose {
         board.grid.dump_with(Cell::as_char)
     }
-    let score = simulate(&mut board);
+    let score = simulate(&mut board, args.mode);
     if args.verbose {
         board.grid.dump_with(Cell::as_char)
     }
