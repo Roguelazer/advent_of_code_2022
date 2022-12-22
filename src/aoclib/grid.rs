@@ -45,6 +45,14 @@ impl<V: Clone + fmt::Debug> DenseGrid<V> {
         }
     }
 
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
     pub fn size(&self) -> usize {
         self.width * self.height
     }
