@@ -26,15 +26,19 @@ impl<
 {
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Point<I: DimVal = i64> {
     pub x: I,
     pub y: I,
 }
 
 impl<I: DimVal> Point<I> {
-    pub fn new(x: I, y: I) -> Self {
+    pub const fn new(x: I, y: I) -> Self {
         Point { x, y }
+    }
+
+    pub fn transpose(&self) -> Self {
+        Point::new(self.y, self.x)
     }
 
     pub fn line_to(&self, other: Point<I>) -> impl Iterator<Item = Point<I>> {
@@ -61,6 +65,17 @@ impl<I: DimVal> std::ops::Add for Point<I> {
         Point {
             x: self.x + other.x,
             y: self.y + other.y,
+        }
+    }
+}
+
+impl<I: DimVal> std::ops::Mul<I> for Point<I> {
+    type Output = Self;
+
+    fn mul(self, other: I) -> Self {
+        Point {
+            x: self.x * other,
+            y: self.y + other,
         }
     }
 }
@@ -120,6 +135,12 @@ impl<I: DimVal> Iterator for LineToIter<I> {
 #[cfg(test)]
 mod tests {
     use super::Point;
+
+    #[test]
+    fn transpose() {
+        assert_eq!(Point::new(1, 0).transpose(), Point::new(0, 1));
+        assert_eq!(Point::new(0, 1).transpose(), Point::new(1, 0));
+    }
 
     #[test]
     fn test_line_to_y() {
