@@ -68,7 +68,11 @@ impl Map {
             }
         }
         if pos.y >= 0 {
-            assert!(g.get(pos) == Some(b'.'));
+            match g.get(pos) {
+                Some(b'.') => {}
+                None => {}
+                other => panic!("{} = {:?}, expected .", pos, other),
+            }
             g.set(pos, b'E');
         }
         g.dump_with(|c| *c as char);
@@ -100,12 +104,7 @@ impl Map {
     }
 
     fn can_move(&self, position: Point) -> bool {
-        if position.x == 0 && position.y == -1 {
-            true
-        } else if position.x < 0
-            || position.x >= self.width
-            || position.y < 0
-            || position.y >= self.height
+        if position.x < 0 || position.x >= self.width || position.y < 0 || position.y >= self.height
         {
             false
         } else {
@@ -210,15 +209,52 @@ const EAST: Point = Point::new(1, 0);
 const WEST: Point = Point::new(-1, 0);
 const NORTH: Point = Point::new(0, -1);
 
-fn simulate(
+trait MaybePath: std::fmt::Debug {
+    fn empty() -> Self;
+    fn with(&self, position: Point) -> Self;
+    fn dump_with(&self, _memo: &mut Memo) {}
+}
+
+impl MaybePath for Vec<Point> {
+    fn empty() -> Self {
+        vec![]
+    }
+
+    fn with(&self, position: Point) -> Self {
+        let mut new = self.clone();
+        new.push(position);
+        new
+    }
+
+    fn dump_with(&self, memo: &mut Memo) {
+        memo.dump_with_path(self)
+    }
+}
+
+impl MaybePath for () {
+    fn empty() -> Self {
+        ()
+    }
+
+    fn with(&self, _position: Point) -> Self {
+        ()
+    }
+}
+
+fn simulate<P: MaybePath>(
     memo: &mut Memo,
     start_coordinate: Point,
     start_ts: usize,
     end_coordinate: Point,
+    empty_path: &P,
 ) -> usize {
     let mut queue = VecDeque::new();
     let mut max_ts = 0;
-    queue.push_back((start_coordinate, start_ts, vec![start_coordinate]));
+    queue.push_back((
+        start_coordinate,
+        start_ts,
+        empty_path.with(start_coordinate),
+    ));
     while let Some((position, timestamp, path)) = queue.pop_front() {
         log::debug!("considering {} at {}", position, timestamp);
         max_ts = std::cmp::max(max_ts, timestamp);
@@ -230,19 +266,15 @@ fn simulate(
         for offset in &[SOUTH, NORTH, WEST, EAST] {
             let candidate = position + *offset;
             if candidate == end_coordinate {
-                // memo.dump_with_path(&path);
+                path.dump_with(memo);
                 return timestamp + 1;
             }
             if map.can_move(candidate) {
-                let mut new_path = path.clone();
-                new_path.push(candidate);
-                queue.push_back((candidate, timestamp + 1, new_path));
+                queue.push_back((candidate, timestamp + 1, path.with(candidate)));
             }
         }
         if map.can_move(position) || position == start_coordinate {
-            let mut new_path = path.clone();
-            new_path.push(position);
-            queue.push_back((position, timestamp + 1, new_path));
+            queue.push_back((position, timestamp + 1, path.with(position)));
         }
     }
     panic!("ran out of moves at {}", max_ts);
@@ -269,14 +301,31 @@ fn main() -> anyhow::Result<()> {
         maps_by_step,
         seen: HashSet::new(),
     };
+    let start = std::time::Instant::now();
+    #[cfg(debug_assertions)]
+    let empty_path = vec![];
+    #[cfg(not(debug_assertions))]
+    let empty_path = ();
     let best = if args.mode == Mode::Part1 {
-        simulate(&mut memo, start_coordinate, 0, end_coordinate)
+        simulate(&mut memo, start_coordinate, 0, end_coordinate, &empty_path)
     } else {
-        let first = simulate(&mut memo, start_coordinate, 0, end_coordinate);
-        let second = simulate(&mut memo, end_coordinate, first, start_coordinate);
-        let third = simulate(&mut memo, start_coordinate, second, end_coordinate);
+        let first = simulate(&mut memo, start_coordinate, 0, end_coordinate, &empty_path);
+        let second = simulate(
+            &mut memo,
+            end_coordinate,
+            first,
+            start_coordinate,
+            &empty_path,
+        );
+        let third = simulate(
+            &mut memo,
+            start_coordinate,
+            second,
+            end_coordinate,
+            &empty_path,
+        );
         third
     };
-    println!("{}", best);
+    println!("{} (in {:?})", best, start.elapsed());
     Ok(())
 }
