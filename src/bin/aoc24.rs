@@ -15,6 +15,8 @@ enum Mode {
 struct Args {
     #[clap(short, long)]
     verbose: bool,
+    #[clap(short, long)]
+    dump_path: bool,
     #[clap(short, long, value_enum)]
     mode: Mode,
 }
@@ -193,9 +195,9 @@ impl Memo {
         }
     }
 
-    fn dump_with_path(&mut self, path: &[Point]) {
-        for (ts, position) in path.iter().enumerate() {
-            self.ensure_map(ts);
+    fn dump_with_path(&mut self, path: &[(usize, Point)]) {
+        for (ts, position) in path.iter() {
+            self.ensure_map(*ts);
             let map = self.maps_by_step.get(&ts).unwrap();
             println!("TS={}, POS={}", ts, position);
             map.dump(*position);
@@ -211,33 +213,42 @@ const NORTH: Point = Point::new(0, -1);
 
 trait MaybePath: std::fmt::Debug {
     fn empty() -> Self;
-    fn with(&self, position: Point) -> Self;
+    fn with(&self, ts: usize, position: Point) -> Self;
     fn dump_with(&self, _memo: &mut Memo) {}
+    fn end_ts(&self) -> usize;
 }
 
-impl MaybePath for Vec<Point> {
+impl MaybePath for Vec<(usize, Point)> {
     fn empty() -> Self {
         vec![]
     }
 
-    fn with(&self, position: Point) -> Self {
+    fn with(&self, ts: usize, position: Point) -> Self {
         let mut new = self.clone();
-        new.push(position);
+        new.push((ts, position));
         new
     }
 
     fn dump_with(&self, memo: &mut Memo) {
         memo.dump_with_path(self)
     }
+
+    fn end_ts(&self) -> usize {
+        self.iter().last().map(|p| p.0).unwrap_or(0)
+    }
 }
 
-impl MaybePath for () {
+impl MaybePath for usize {
     fn empty() -> Self {
-        ()
+        0
     }
 
-    fn with(&self, _position: Point) -> Self {
-        ()
+    fn with(&self, ts: usize, _position: Point) -> Self {
+        ts
+    }
+
+    fn end_ts(&self) -> usize {
+        *self
     }
 }
 
@@ -247,15 +258,15 @@ fn simulate<P: MaybePath>(
     start_ts: usize,
     end_coordinate: Point,
     empty_path: &P,
-) -> usize {
+) -> P {
     let mut queue = VecDeque::new();
     let mut max_ts = 0;
     queue.push_back((
         start_coordinate,
-        start_ts,
-        empty_path.with(start_coordinate),
+        empty_path.with(start_ts, start_coordinate),
     ));
-    while let Some((position, timestamp, path)) = queue.pop_front() {
+    while let Some((position, path)) = queue.pop_front() {
+        let timestamp = path.end_ts();
         log::debug!("considering {} at {}", position, timestamp);
         max_ts = std::cmp::max(max_ts, timestamp);
         if !memo.seen.insert((position, timestamp)) {
@@ -266,15 +277,14 @@ fn simulate<P: MaybePath>(
         for offset in &[SOUTH, NORTH, WEST, EAST] {
             let candidate = position + *offset;
             if candidate == end_coordinate {
-                path.dump_with(memo);
-                return timestamp + 1;
+                return path.with(timestamp + 1, end_coordinate);
             }
             if map.can_move(candidate) {
-                queue.push_back((candidate, timestamp + 1, path.with(candidate)));
+                queue.push_back((candidate, path.with(timestamp + 1, candidate)));
             }
         }
         if map.can_move(position) || position == start_coordinate {
-            queue.push_back((position, timestamp + 1, path.with(position)));
+            queue.push_back((position, path.with(timestamp + 1, position)));
         }
     }
     panic!("ran out of moves at {}", max_ts);
@@ -297,35 +307,58 @@ fn main() -> anyhow::Result<()> {
     let (first_map, start_coordinate, end_coordinate) = parse_map(&input);
     let mut maps_by_step = BTreeMap::new();
     maps_by_step.insert(0, first_map);
-    let mut memo = Memo {
+    let memo = Memo {
         maps_by_step,
         seen: HashSet::new(),
     };
+    if args.verbose {
+        run_rest(start_coordinate, end_coordinate, memo, vec![], args);
+    } else {
+        run_rest(start_coordinate, end_coordinate, memo, 0, args);
+    }
+    Ok(())
+}
+
+fn run_rest<P: MaybePath>(
+    start_coordinate: Point,
+    end_coordinate: Point,
+    mut memo: Memo,
+    empty_path: P,
+    args: Args,
+) {
     let start = std::time::Instant::now();
-    #[cfg(debug_assertions)]
-    let empty_path = vec![];
-    #[cfg(not(debug_assertions))]
-    let empty_path = ();
     let best = if args.mode == Mode::Part1 {
-        simulate(&mut memo, start_coordinate, 0, end_coordinate, &empty_path)
+        let path = simulate(&mut memo, start_coordinate, 0, end_coordinate, &empty_path);
+        if args.dump_path {
+            path.dump_with(&mut memo);
+        }
+        path
     } else {
         let first = simulate(&mut memo, start_coordinate, 0, end_coordinate, &empty_path);
+        if args.dump_path {
+            first.dump_with(&mut memo);
+        }
         let second = simulate(
             &mut memo,
             end_coordinate,
-            first,
+            first.end_ts(),
             start_coordinate,
             &empty_path,
         );
+        if args.dump_path {
+            second.dump_with(&mut memo);
+        }
         let third = simulate(
             &mut memo,
             start_coordinate,
-            second,
+            second.end_ts(),
             end_coordinate,
             &empty_path,
         );
+        if args.dump_path {
+            third.dump_with(&mut memo);
+        }
         third
     };
-    println!("{} (in {:?})", best, start.elapsed());
-    Ok(())
+    println!("{} (in {:?})", best.end_ts(), start.elapsed());
 }
